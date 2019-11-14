@@ -1,18 +1,33 @@
 /*
+ * Hardware target:
+ *  ESP32 DEVKIT V1
+ *  generic boards from eBay/Amazon with ESP32-WROOM-32 module
+ *
+ * IDE setup:
+ *  Board:  ESP32 Dev Module
+ *  CPU frequency: 240MHz (WiFi/BT)
+ *  Flash frequency: 80MHz
+ *  Flash size: 4MB (32Mb)
+ *  Partition scheme: Huge App (3MB No OTA/1MB SPIFFS)
+ *
+ *
  * TODO:
  * 
- * Some devices (e.g. Mooshimeter) broadcast multiple types of advertisements with different payloads.
- * the BLE library can be set to only return new addresses during a scan interval, which then misses these
- * multiple packets. pBLEScan->setAdvertisedDeviceCallbacks(..., book keepDuplicates)
+ * Some devices (e.g. Mooshimeter) broadcast multiple types of advertisements
+ * with different payloads.  The BLE library can be set to only return new
+ * addresses during a scan interval, which then misses these multiple packets.
+ * pBLEScan->setAdvertisedDeviceCallbacks(..., bool keepDuplicates)
  * 
- * It would be potentially useful to record *unique advertisements*, meaning only ignore duplicates
- * of *both* address+payload.  The BLE library doesn't do this (address only).
+ * It would be potentially useful to record *unique advertisements*, meaning
+ * only ignore duplicates of *both* address+payload.  The BLE library doesn't
+ * do this (address only).
  * 
- * Make a hash of the payload, store the [address, pHash, time] in an array and check for membership
- * before deciding to pass on via MQTT.
+ * Make a hash of the payload, store the [address, pHash, time] in an array and
+ * check for membership before deciding to pass on via MQTT.
  * 
- * Put a time limit on when to repeat heard devices, so a conntinuously-broadcasting device would
- * only be recorded every INTERVAL seconds instead of its (shorter) beacon interval.
+ * Put a time limit on when to repeat heard devices, so a
+ * conntinuously-broadcasting device would only be recorded every INTERVAL
+ * seconds instead of its (shorter) beacon interval.
  */
 
 
@@ -24,6 +39,7 @@
 
 
 /*
+ * available in the Library Manger
  * https://github.com/nkolban/ESP32_BLE_Arduino
  */
 #include <BLEDevice.h>
@@ -34,7 +50,7 @@
 
 /*
  * configuration includes passwords/etc
- * include separately
+ * include separately to not leak private information
  */
 #include "config.h"
 
@@ -57,8 +73,7 @@ unsigned long last_blink = 0;
 
 BLEScan* pBLEScan;
 bool is_scanning = false;
-bool cold_boot = true;
-
+bool cold_boot = true;  // treat power-on differently than re-starting a scan
 
 // use multiple wifi options
 WiFiClient wifi;
@@ -67,6 +82,11 @@ WiFiMulti wifiMulti;
 PubSubClient mqtt(wifi);
 
 
+/*
+ * Given a byte array of length (n), return the ASCII hex representation
+ * and properly zero pad values less than 0x10.
+ * String(0x08, HEX) will yield '8' instead of the expected '08' string
+ */
 String hexToStr(uint8_t* arr, int n)
 {
   String result;
@@ -78,12 +98,16 @@ String hexToStr(uint8_t* arr, int n)
 }
 
 
+
+/*
+ * Callback that gets called on every received BLE advertisement.
+ */
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
+      // Construct a JSON-formatted string with device information
       String msg = "{";
       msg.reserve(300);
       
-
       msg.concat("\"time\":\"");
       msg.concat(getIsoTime());
       msg.concat("\",");
@@ -119,14 +143,15 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
         msg.remove(msg.lastIndexOf(","));
       }
       msg.concat("}");
-      
+
+      // Publish the string via MQTT
       mqtt.beginPublish(topic.c_str(), msg.length(), false);
       mqtt.print(msg.c_str());
       // mqtt.endPublish();  // does nothing
 
+      // Blink for every received advertisement
       nBlinks += 1;
 
-      Serial.print(msg.length());
       Serial.println(msg);
       //Serial.printf("BLE: %s \n", advertisedDevice.toString().c_str());
     }
@@ -134,7 +159,7 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
 
 
-/**
+/*
  * Callback invoked when scanning has completed.
  */
 static void scanCompleteCB(BLEScanResults scanResults) {
@@ -143,6 +168,10 @@ static void scanCompleteCB(BLEScanResults scanResults) {
 
 
 
+/*
+ * Start a scan for BLE advertisements
+ * if reinit is true, then re-setup the scan configuration parameters
+ */
 void startBLEScan(bool reinit=false)
 {
   Serial.println("Starting BLE scan.");
@@ -153,7 +182,7 @@ void startBLEScan(bool reinit=false)
     pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), KEEP_DUPLICATES);  // keepDuplicates?
     pBLEScan->setActiveScan(true); //active scan uses more power, but get results faster
     pBLEScan->setInterval(100);
-    pBLEScan->setWindow(99);  // less or equal setInterval value
+    pBLEScan->setWindow(99);  // less or equal to setInterval value
   }
 
   // forget about the devices seen in the last BLE_SCAN_TIME interval
@@ -162,7 +191,9 @@ void startBLEScan(bool reinit=false)
 }
 
 
-
+/*
+ * Called whenever a payload is received from a subscribed MQTT topic
+ */
 void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
   Serial.print("MQTT-receive [");
   Serial.print(topic);
@@ -178,6 +209,9 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
   } else {
     led_state = 0;
   }
+
+  // this will effectively be a half-blink, forcing the LED to the
+  // requested state
   nBlinks += 1;
 }
 
@@ -315,7 +349,9 @@ void loop() {
       }
     }
   }
-  
+
+  // Setup BLE scanning and restart a scan
+  // only fire off a new scan if we are not already scanning!
   if (not is_scanning) {
     if (cold_boot) {
       startBLEScan(true);
