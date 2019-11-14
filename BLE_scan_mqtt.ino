@@ -175,6 +175,7 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
   } else {
     led_state = 0;
   }
+  nBlinks += 1;
 }
 
 void mqtt_reconnect() {
