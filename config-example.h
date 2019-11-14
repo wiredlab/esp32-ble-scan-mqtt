@@ -11,8 +11,9 @@
 
 
 // WiFi config
-const char *WLAN_SSID = "ssid";
-const char *WLAN_PASS = "pass";
+const char *WLAN_SSID[] = {"valpo-net"};
+const char *WLAN_PASS[] = {"brownandgold"};
+const int NUM_WLANS = 1;
 
 
 // SNTP time config
@@ -30,7 +31,7 @@ const char *MQTT_PASS = "pass";
 
 
 // Bluetooth LE settings
-const int BLE_SCAN_TIME = 60; // seconds
+const int BLE_SCAN_TIME = 10; // seconds
 
 // true: output every packet heard
 // false: output first packet for each address heard in BLE_SCAN_TIME interval

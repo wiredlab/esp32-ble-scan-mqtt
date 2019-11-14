@@ -18,6 +18,7 @@
 
 
 #include <WiFi.h>
+#include <WiFiMulti.h>
 #include <PubSubClient.h>
 #include "time.h"
 
@@ -59,9 +60,11 @@ bool is_scanning = false;
 bool cold_boot = true;
 
 
+// use multiple wifi options
 WiFiClient wifi;
-PubSubClient mqtt(wifi);
+WiFiMulti wifiMulti;
 
+PubSubClient mqtt(wifi);
 
 
 String hexToStr(uint8_t* arr, int n)
@@ -178,28 +181,64 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
   nBlinks += 1;
 }
 
-void mqtt_reconnect() {
-  // Loop until we're reconnected
-  while (!mqtt.connected()) {
-    Serial.print("MQTT connection...");
-    // Attempt to connect
-    if (mqtt.connect(my_mac.c_str(), MQTT_USER, MQTT_PASS)) {
-      Serial.println("connected");
-      // Once connected, publish an announcement...
-      mqtt.publish((my_mac + MQTT_ANNOUNCE_TOPIC).c_str(), "connect");
-      // ... and resubscribe
-      mqtt.subscribe((my_mac + MQTT_CONTROL_TOPIC).c_str());
-    } else {
-      Serial.print("failed, rc=");
-      Serial.print(mqtt.state());
-      Serial.println(" try again in 5 seconds");
-      // Wait 5 seconds before retrying
-      delay(5000);
+
+/*
+ * Check WiFi connection, attempt to reconnect.
+ * This blocks until a connection is (re)established.
+ */
+void check_wifi()
+{
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.print("WiFi connection lost, reconnecting");
+    while (wifiMulti.run() != WL_CONNECTED) {
+      delay(500);
+      Serial.print(".");
     }
   }
 }
 
 
+/*
+ * Check the MQTT connection state and attempt to reconnect.
+ * If we do reconnect, then subscribe to MQTT_CONTROL_TOPIC and
+ * make an announcement to MQTT_ANNOUNCE_TOPIC with the WiFi SSID and
+ * local IP address.
+ */
+void check_mqtt()
+{
+  if (mqtt.connected()) { return; }
+
+  // reconnect
+  Serial.print("MQTT reconnect...");
+  // Attempt to connect
+  if (mqtt.connect(my_mac.c_str(), MQTT_USER, MQTT_PASS)) {
+    Serial.println("connected");
+    // Once connected, publish an announcement...
+    // JSON formatted payload
+    String msg = "{\"ssid\":\"" + WiFi.SSID()
+                  + "\",\"ip\":\"" + WiFi.localIP().toString()
+                  + "\"}";
+    Serial.println(msg);
+    mqtt.publish((my_mac + MQTT_ANNOUNCE_TOPIC).c_str(), msg.c_str());
+
+
+    // ... and resubscribe
+    mqtt.subscribe((my_mac + MQTT_CONTROL_TOPIC).c_str());
+  } else {
+    Serial.print("failed, rc=");
+    Serial.println(mqtt.state());
+    Serial.println(" try again in 5 seconds");
+    // Wait 5 seconds before retrying
+    delay(5000);
+  }
+}
+
+
+/*
+ * Return a string in RFC3339 format of the current time.
+ * Will return a placeholder if there is no network connection to an
+ * NTP server.
+ */
 String getIsoTime()
 {
   char timeStr[21] = {0};  // NOTE: change if strftime format changes
@@ -215,6 +254,7 @@ String getIsoTime()
 }
 
 
+
 void setup() {
   Serial.begin(115200);
   Serial.println();
@@ -222,8 +262,11 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, led_state);
 
+  //WiFi.mode(WIFI_STA);
+  for (int i=0; i<NUM_WLANS; i++) {
+    wifiMulti.addAP(WLAN_SSID[i], WLAN_PASS[i]);
+  }
 
-  WiFi.begin(WLAN_SSID, WLAN_PASS);
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
   
@@ -235,7 +278,7 @@ void setup() {
   mqtt.setCallback(mqtt_receive_callback);
   topic = my_mac + MQTT_BLE_TOPIC;
   
-  while (WiFi.status() != WL_CONNECTED) {
+  while (wifiMulti.run() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
@@ -243,7 +286,7 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
-
+  delay(1000);
   configTime(0, 0, NTP_SERVER);
 //  initBLEScan(true);
 }
@@ -252,11 +295,12 @@ void setup() {
 
 
 void loop() {
-  if (!mqtt.connected()) {
-    mqtt_reconnect();
-  }
+  check_wifi();
+  check_mqtt();
+
   mqtt.loop();
 
+  // Handle blinking without using delay()
   unsigned long now = millis();
   if (nBlinks > 0) {
     if (now - last_blink >= BLINK_MS) {
