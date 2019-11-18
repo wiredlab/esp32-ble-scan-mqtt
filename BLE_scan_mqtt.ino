@@ -33,7 +33,9 @@
 
 
 #include <WiFi.h>
+#include <WiFiUdp.h>
 #include <WiFiMulti.h>
+#include <NTPClient.h>
 #include <PubSubClient.h>
 #include "time.h"
 
@@ -75,10 +77,11 @@ BLEScan* pBLEScan;
 bool is_scanning = false;
 bool cold_boot = true;  // treat power-on differently than re-starting a scan
 
-// use multiple wifi options
-WiFiClient wifi;
-WiFiMulti wifiMulti;
 
+WiFiClient wifi;
+WiFiMulti wifiMulti;  // use multiple wifi options
+WiFiUDP udp;
+NTPClient ntpClient(udp, NTP_SERVER, 0, NTP_UPDATE_INTERVAL);
 PubSubClient mqtt(wifi);
 
 
@@ -277,7 +280,10 @@ String getIsoTime()
 {
   char timeStr[21] = {0};  // NOTE: change if strftime format changes
 
-  if(!getLocalTime(&timeinfo)){
+  time_t time_now = ntpClient.getEpochTime();
+  localtime_r(&time_now, &timeinfo);
+
+  if (timeinfo.tm_year <= (2016 - 1900)) {
     Serial.println("Failed to obtain time.");
     timeStr[0] = 0;
     return String("YYYY-MM-DDTHH:MM:SSZ");
@@ -296,6 +302,9 @@ void setup() {
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, led_state);
 
+  /*
+   * setup WiFi
+   */
   //WiFi.mode(WIFI_STA);
   for (int i=0; i<NUM_WLANS; i++) {
     wifiMulti.addAP(WLAN_SSID[i], WLAN_PASS[i]);
@@ -307,11 +316,6 @@ void setup() {
   Serial.print("MAC: ");
   Serial.println(my_mac);
 
-  
-  mqtt.setServer(MQTT_SERVER, MQTT_PORT);
-  mqtt.setCallback(mqtt_receive_callback);
-  topic = my_mac + MQTT_BLE_TOPIC;
-  
   while (wifiMulti.run() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
@@ -320,9 +324,19 @@ void setup() {
   Serial.println("IP address: ");
   Serial.println(WiFi.localIP());
 
+  /*
+   * setup MQTT
+   */
+  mqtt.setServer(MQTT_SERVER, MQTT_PORT);
+  mqtt.setCallback(mqtt_receive_callback);
+  topic = my_mac + MQTT_BLE_TOPIC;
+
   delay(1000);
-  configTime(0, 0, NTP_SERVER);
-//  initBLEScan(true);
+
+  /*
+   * setup NTP time sync
+   */
+  ntpClient.begin();
 }
 
 
@@ -333,6 +347,7 @@ void loop() {
   check_mqtt();
 
   mqtt.loop();
+  ntpClient.update();
 
   // Handle blinking without using delay()
   unsigned long now = millis();
@@ -360,5 +375,6 @@ void loop() {
       startBLEScan();
     }
   }
+
   delay(1);
 }

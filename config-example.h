@@ -18,6 +18,7 @@ const int NUM_WLANS = 1;
 
 // SNTP time config
 const char *NTP_SERVER = "pool.ntp.org";
+const int NTP_UPDATE_INTERVAL = 600000;  // ms between NTP queries
 
 
 // MQTT settings
