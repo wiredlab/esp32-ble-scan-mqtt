@@ -248,19 +248,26 @@ void check_mqtt()
   // reconnect
   Serial.print("MQTT reconnect...");
   // Attempt to connect
-  if (mqtt.connect(my_mac.c_str(), MQTT_USER, MQTT_PASS)) {
+  int connect_status = mqtt.connect(my_mac.c_str(), MQTT_USER, MQTT_PASS,
+                   (MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
+                   2,  // willQoS
+                   1,  // willRetain
+                   "{\"state\":\"disconnected\"}");
+  if (connect_status) {
     Serial.println("connected");
     // Once connected, publish an announcement...
     // JSON formatted payload
-    String msg = "{\"ssid\":\"" + WiFi.SSID()
+    String msg = "{\"state\":\"connected\",\"ssid\":\"" + WiFi.SSID()
                   + "\",\"ip\":\"" + WiFi.localIP().toString()
                   + "\"}";
     Serial.println(msg);
-    mqtt.publish((my_mac + MQTT_ANNOUNCE_TOPIC).c_str(), msg.c_str());
+    mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
+                 msg.c_str(),
+                 true);
 
 
     // ... and resubscribe
-    mqtt.subscribe((my_mac + MQTT_CONTROL_TOPIC).c_str());
+    mqtt.subscribe((MQTT_PREFIX_TOPIC + my_mac + MQTT_CONTROL_TOPIC).c_str());
   } else {
     Serial.print("failed, rc=");
     Serial.println(mqtt.state());
@@ -329,7 +336,7 @@ void setup() {
    */
   mqtt.setServer(MQTT_SERVER, MQTT_PORT);
   mqtt.setCallback(mqtt_receive_callback);
-  topic = my_mac + MQTT_BLE_TOPIC;
+  topic = MQTT_PREFIX_TOPIC + my_mac + MQTT_BLE_TOPIC;
 
   delay(1000);
 
