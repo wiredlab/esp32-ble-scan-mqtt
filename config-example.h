@@ -6,6 +6,8 @@
 
 // on-board LED blinks once per packet
 // quiescent state (on or off) is set by "/control" topic reception
+//   generic board: pin 2
+//   SparkFun ESP32 Thing: pin 5
 #define LED_PIN 2
 #define BLINK_MS 50
 
