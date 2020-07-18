@@ -40,6 +40,11 @@
 #include "time.h"
 #include <ArduinoJson.h>
 
+// MicroSD
+#include "driver/sdmmc_host.h"
+#include "driver/sdmmc_defs.h"
+#include "sdmmc_cmd.h"
+#include "esp_vfs_fat.h"
 
 /*
  * available in the Library Manger
@@ -84,6 +89,9 @@ WiFiMulti wifiMulti;  // use multiple wifi options
 WiFiUDP udp;
 NTPClient ntpClient(udp, NTP_SERVER, 0, NTP_UPDATE_INTERVAL);
 PubSubClient mqtt(wifi);
+
+
+bool sdcard_available = false;
 
 
 /*
@@ -131,6 +139,18 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     char buffer[256];
     size_t len = serializeJson(json, buffer);
 
+    // Save line to file on sd card
+    // open new file if:
+    //    no existing file
+    //    current file is too large
+    //    UTC date has changed
+    //
+    if (sdcard_available) {
+      FILE *file = fopen("/sdcard/ble-sniffer.log", "a");
+      fwrite(buffer, len, 1, file);
+      fprintf(file, "\n");
+      fclose(file);
+    }
 
 
     // Publish the string via MQTT
@@ -288,6 +308,31 @@ String getIsoTime()
 }
 
 
+static esp_err_t init_sdcard()
+{
+  esp_err_t ret = ESP_FAIL;
+  sdmmc_host_t host = SDMMC_HOST_DEFAULT();
+  sdmmc_slot_config_t slot_config = SDMMC_SLOT_CONFIG_DEFAULT();
+  esp_vfs_fat_sdmmc_mount_config_t mount_config = {
+    .format_if_mount_failed = false,
+    .max_files = 1,
+  };
+  sdmmc_card_t *card;
+
+  Serial.println("Mounting SD card...");
+  ret = esp_vfs_fat_sdmmc_mount("/sdcard", &host, &slot_config, &mount_config, &card);
+
+  if (ret == ESP_OK) {
+    sdcard_available = true;
+    Serial.println("SD card mount successfully!");
+  }  else  {
+    sdcard_available = false;
+    Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s", esp_err_to_name(ret));
+  }
+  return ret;
+}
+
+
 
 void setup() {
   Serial.begin(115200);
@@ -334,6 +379,11 @@ void setup() {
    * setup NTP time sync
    */
   ntpClient.begin();
+
+  /*
+   * SD card init
+   */
+  init_sdcard();
 }
 
 
