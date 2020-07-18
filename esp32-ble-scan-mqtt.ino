@@ -154,9 +154,11 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
 
     // Publish the string via MQTT
-    mqtt.beginPublish(topic.c_str(), len, false);
-    mqtt.print(buffer);
-    mqtt.endPublish();  // does nothing?
+    if (mqtt.connected()) {
+      mqtt.beginPublish(topic.c_str(), len, false);
+      mqtt.print(buffer);
+      mqtt.endPublish();  // does nothing?
+    }
 
     // Blink for every received advertisement
     nBlinks += 1;
