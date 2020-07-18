@@ -38,6 +38,7 @@
 #include <NTPClient.h>
 #include <PubSubClient.h>
 #include "time.h"
+#include <ArduinoJson.h>
 
 
 /*
@@ -93,6 +94,7 @@ PubSubClient mqtt(wifi);
 String hexToStr(uint8_t* arr, int n)
 {
   String result;
+  result.reserve(2*n);
   for (int i = 0; i < n; ++i) {
     if (arr[i] < 0x10) {result += '0';}
     result += String(arr[i], HEX);
@@ -106,58 +108,41 @@ String hexToStr(uint8_t* arr, int n)
  * Callback that gets called on every received BLE advertisement.
  */
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-    void onResult(BLEAdvertisedDevice advertisedDevice) {
-      // Construct a JSON-formatted string with device information
-      String msg = "{";
-      msg.reserve(300);
-      
-      msg.concat("\"time\":\"");
-      msg.concat(getIsoTime());
-      msg.concat("\",");
-      
-      msg.concat("\"mac\":\"");
-      msg.concat(hexToStr(*advertisedDevice.getAddress().getNative(), 6));
-      msg.concat("\",");
+  void onResult(BLEAdvertisedDevice advertisedDevice) {
+    // Construct a JSON-formatted string with device information
+    DynamicJsonDocument json(JSON_OBJECT_SIZE(7));
+    json["time"] = getIsoTime();
+    json["mac"] = hexToStr(*advertisedDevice.getAddress().getNative(), 6);
+    String payload = hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength());
+    json["payload"] = payload.c_str();
 
-      msg.concat("\"payload\":\"");
-      msg.concat(hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength()));
-      msg.concat("\",");
-      
-      if (advertisedDevice.haveName()) {
-        msg.concat("\"name\":\"");
-        msg.concat(advertisedDevice.getName().c_str());
-        msg.concat("\",");
-      }
-
-      if (advertisedDevice.haveRSSI()) {
-        msg.concat("\"rssi\":");
-        msg.concat(advertisedDevice.getRSSI());
-        msg.concat(",");
-      }
-
-      if (advertisedDevice.haveTXPower()) {
-        msg.concat("\"tx\":");
-        msg.concat(advertisedDevice.getTXPower());
-        msg.concat(",");
-      }
-
-      // trim the final comma to ensure valid JSON
-      if (msg.endsWith(",")) {
-        msg.remove(msg.lastIndexOf(","));
-      }
-      msg.concat("}");
-
-      // Publish the string via MQTT
-      mqtt.beginPublish(topic.c_str(), msg.length(), false);
-      mqtt.print(msg.c_str());
-      // mqtt.endPublish();  // does nothing
-
-      // Blink for every received advertisement
-      nBlinks += 1;
-
-      Serial.println(msg);
-      //Serial.printf("BLE: %s \n", advertisedDevice.toString().c_str());
+    if (advertisedDevice.haveName()) {
+      json["name"] = advertisedDevice.getName().c_str();
     }
+
+    if (advertisedDevice.haveRSSI()) {
+      json["rssi"] = advertisedDevice.getRSSI();
+    }
+
+    if (advertisedDevice.haveTXPower()) {
+      json["tx"] = advertisedDevice.getTXPower();
+    }
+
+    char buffer[256];
+    size_t len = serializeJson(json, buffer);
+
+
+
+    // Publish the string via MQTT
+    mqtt.beginPublish(topic.c_str(), len, false);
+    mqtt.print(buffer);
+    mqtt.endPublish();  // does nothing?
+
+    // Blink for every received advertisement
+    nBlinks += 1;
+
+    Serial.println(buffer);
+  }
 };
 
 
@@ -319,7 +304,7 @@ void setup() {
 
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
-  
+
   Serial.print("MAC: ");
   Serial.println(my_mac);
 
