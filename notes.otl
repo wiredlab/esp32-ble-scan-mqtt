@@ -1,0 +1,18 @@
+
+
+BLE advertisement sniffer
+
+Continuously sniff BLE adv packets
+	Timestamp
+	received MAC
+	payload
+	name if available
+	RSSI if available
+	TXpower if available
+
+Logging
+	MQTT
+		topic: esp32-sniffer/<MAC>/status
+			:w
+			:
+l

@@ -16,6 +16,7 @@
 const char *WLAN_SSID[] = {"valpo-media"};
 const char *WLAN_PASS[] = {"brownandgold"};
 const int NUM_WLANS = 1;
+const int WIFI_RETRY_DELAY = 300000;  // milliseconds
 
 
 // SNTP time config
