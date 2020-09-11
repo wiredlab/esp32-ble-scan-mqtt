@@ -39,6 +39,7 @@
 #include <PubSubClient.h>
 #include "time.h"
 #include <ArduinoJson.h>
+#
 
 // MicroSD
 #include "driver/sdmmc_host.h"
@@ -62,6 +63,7 @@
  */
 #include "config.h"
 
+#include "logger.h"
 
 /*
  * globals
@@ -74,7 +76,7 @@ String my_mac;
 
 // blink-per-message housekeeping
 int nBlinks = 0;
-bool led_state = 0;
+bool led_state = 1;
 bool in_blink = false;
 unsigned long last_blink = 0;
 
@@ -89,6 +91,8 @@ WiFiMulti wifiMulti;  // use multiple wifi options
 WiFiUDP udp;
 NTPClient ntpClient(udp, NTP_SERVER, 0, NTP_UPDATE_INTERVAL);
 PubSubClient mqtt(wifi);
+unsigned long last_wifi_check = 0;
+unsigned long last_mqtt_check = 0;
 
 
 bool sdcard_available = false;
@@ -145,12 +149,8 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     //    current file is too large
     //    UTC date has changed
     //
-    if (sdcard_available) {
-      FILE *file = fopen("/sdcard/ble-sniffer.log", "a");
-      fwrite(buffer, len, 1, file);
-      fprintf(file, "\n");
-      fclose(file);
-    }
+    
+    logger(buffer, sdcard_available);
 
 
     // Publish the string via MQTT
@@ -205,13 +205,21 @@ void startBLEScan(bool reinit=false)
  * Called whenever a payload is received from a subscribed MQTT topic
  */
 void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
-  Serial.print("MQTT-receive [");
-  Serial.print(topic);
-  Serial.print("] ");
+  char buffer[256];
+  buffer[0] = 0;
+
+  int len = sprintf(buffer, "MQTT-receive %s ", topic);
+
+  //Serial.print(topic);
+  //Serial.print("] ");
   for (int i = 0; i < length; i++) {
-    Serial.print((char)payload[i]);
+    //Serial.print((char)payload[i]);
+    len += sprintf(buffer, "%02x", (char)payload[i]);
   }
-  Serial.println();
+  //Serial.println();
+  len += sprintf(buffer, "\n");
+
+  logger(buffer, sdcard_available);
 
   // Switch on the LED if an 1 was received as first character
   if ((char)payload[0] == '1') {
@@ -230,15 +238,35 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
  * Check WiFi connection, attempt to reconnect.
  * This blocks until a connection is (re)established.
  */
-void check_wifi()
+bool check_wifi(bool nowait)
 {
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.print("WiFi connection lost, reconnecting");
-    while (wifiMulti.run() != WL_CONNECTED) {
-      delay(500);
-      Serial.print(".");
+    logger("WiFi connecting", sdcard_available);
+    Serial.print("*");
+    if ((millis() - last_wifi_check) >= WIFI_RETRY_DELAY) {
+      int retries = 5;
+      Serial.print("*");
+      while (wifiMulti.run() != WL_CONNECTED) {
+        delay(500);
+        Serial.print(".");
+        retries--;
+        if (retries == 0) { break; }
+      }
+
+      if (retries == 0) {
+        String msg = "WiFi: failed, waiting for " + String(WIFI_RETRY_DELAY/1000) + " seconds";
+        Serial.println(msg);
+        logger(msg.c_str(), sdcard_available);
+      } else {
+        logger(WiFi.localIP().toString().c_str(), sdcard_available);
+      }
+
+      last_wifi_check = millis();
+    } else {
+      Serial.print("x");
     }
   }
+  return (WiFi.status() == WL_CONNECTED);
 }
 
 
@@ -248,9 +276,12 @@ void check_wifi()
  * make an announcement to MQTT_ANNOUNCE_TOPIC with the WiFi SSID and
  * local IP address.
  */
-void check_mqtt()
+bool check_mqtt()
 {
-  if (mqtt.connected()) { return; }
+  if (mqtt.connected()) { return true; }
+
+  // no point to continue if no network
+  if (WiFi.status() != WL_CONNECTED) { return false; }
 
   // reconnect
   Serial.print("MQTT reconnect...");
@@ -267,11 +298,10 @@ void check_mqtt()
     String msg = "{\"state\":\"connected\",\"ssid\":\"" + WiFi.SSID()
                   + "\",\"ip\":\"" + WiFi.localIP().toString()
                   + "\"}";
-    Serial.println(msg);
+    logger(msg.c_str(), sdcard_available);
     mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
                  msg.c_str(),
                  true);
-
 
     // ... and resubscribe
     mqtt.subscribe((MQTT_PREFIX_TOPIC + my_mac + MQTT_CONTROL_TOPIC).c_str());
@@ -280,8 +310,9 @@ void check_mqtt()
     Serial.println(mqtt.state());
     Serial.println(" try again in 5 seconds");
     // Wait 5 seconds before retrying
-    delay(5000);
+    //delay(5000);
   }
+  return mqtt.connected();
 }
 
 
@@ -308,6 +339,11 @@ String getIsoTime()
 }
 
 
+/*
+ * init_sdcard()
+ * 
+ * Setup the SD card for 
+ */
 static esp_err_t init_sdcard()
 {
   esp_err_t ret = ESP_FAIL;
@@ -342,6 +378,11 @@ void setup() {
   digitalWrite(LED_PIN, led_state);
 
   /*
+   * SD card init
+   */
+  init_sdcard();
+
+  /*
    * setup WiFi
    */
   //WiFi.mode(WIFI_STA);
@@ -351,17 +392,16 @@ void setup() {
 
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
-
-  Serial.print("MAC: ");
-  Serial.println(my_mac);
+  logger(my_mac.c_str(), sdcard_available);
 
   while (wifiMulti.run() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  Serial.println("");
-  Serial.println("IP address: ");
-  Serial.println(WiFi.localIP());
+  logger(WiFi.localIP().toString().c_str(), sdcard_available);
+  
+  bool wifi_good = check_wifi(true);
+  
 
   /*
    * setup MQTT
@@ -377,21 +417,22 @@ void setup() {
    */
   ntpClient.begin();
 
-  /*
-   * SD card init
-   */
-  init_sdcard();
 }
 
 
 
 
 void loop() {
-  check_wifi();
-  check_mqtt();
+  bool wifi_good;
+  bool mqtt_good;
+  
+  wifi_good = check_wifi(false);
+  mqtt_good = check_mqtt();
 
-  mqtt.loop();
-  ntpClient.update();
+  if (wifi_good) {
+    ntpClient.update();
+    mqtt.loop();
+  }
 
   // Handle blinking without using delay()
   unsigned long now = millis();
