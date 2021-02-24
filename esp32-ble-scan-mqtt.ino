@@ -125,12 +125,9 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     DynamicJsonDocument json(JSON_OBJECT_SIZE(7));
     json["time"] = getIsoTime();
     json["mac"] = hexToStr(*advertisedDevice.getAddress().getNative(), 6);
+
     String payload = hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength());
     json["payload"] = payload.c_str();
-
-    if (advertisedDevice.haveName()) {
-      json["name"] = advertisedDevice.getName().c_str();
-    }
 
     if (advertisedDevice.haveRSSI()) {
       json["rssi"] = advertisedDevice.getRSSI();
@@ -138,6 +135,10 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
     if (advertisedDevice.haveTXPower()) {
       json["tx"] = advertisedDevice.getTXPower();
+    }
+
+    if (advertisedDevice.haveName()) {
+      json["name"] = advertisedDevice.getName().c_str();
     }
 
     char buffer[256];
@@ -163,7 +164,7 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     // Blink for every received advertisement
     nBlinks += 1;
 
-    Serial.println(buffer);
+    //Serial.println(buffer);
   }
 };
 
@@ -398,10 +399,8 @@ void setup() {
     delay(500);
     Serial.print(".");
   }
-  logger(WiFi.localIP().toString().c_str(), sdcard_available);
-  
-  bool wifi_good = check_wifi(true);
-  
+  logger(wifi.localIP().toString().c_str(), sdcard_available);
+
 
   /*
    * setup MQTT
@@ -432,6 +431,10 @@ void loop() {
   if (wifi_good) {
     ntpClient.update();
     mqtt.loop();
+  }
+
+  if (mqtt_good) {
+    //celebrate!
   }
 
   // Handle blinking without using delay()
