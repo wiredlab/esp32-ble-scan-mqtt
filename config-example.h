@@ -13,22 +13,24 @@
 
 
 // WiFi config
+const int WIFI_RETRY_DELAY = 300000;  // milliseconds
 const char *WLAN_SSID[] = {"valpo-net"};
 const char *WLAN_PASS[] = {"brownandgold"};
 const int NUM_WLANS = 1;
-const int WIFI_RETRY_DELAY = 300000;  // milliseconds
 
 
 // SNTP time config
-const char *NTP_SERVER = "pool.ntp.org";
+const char *NTP_SERVER = "us.pool.ntp.org";
 const int NTP_UPDATE_INTERVAL = 600000;  // ms between NTP queries
 
 
 // MQTT settings
-const char *MQTT_PREFIX_TOPIC = "esp32-sniffer/";
+const char *MQTT_PREFIX_TOPIC = "valpo/esp32-sniffer/";
 const char *MQTT_ANNOUNCE_TOPIC = "/status";
 const char *MQTT_CONTROL_TOPIC = "/control";
 const char *MQTT_BLE_TOPIC = "/ble";
+
+//replace with actual server credentials
 const char *MQTT_SERVER = "mqtt.example.net";
 const int MQTT_PORT = 1883;
 const char *MQTT_USER = "username";
