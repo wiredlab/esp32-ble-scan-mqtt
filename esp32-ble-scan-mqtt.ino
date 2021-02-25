@@ -39,7 +39,7 @@
 #include <PubSubClient.h>
 #include "time.h"
 #include <ArduinoJson.h>
-#
+
 
 // MicroSD
 #include "driver/sdmmc_host.h"
@@ -63,7 +63,6 @@
  */
 #include "config.h"
 
-#include "logger.h"
 
 /*
  * globals
@@ -74,11 +73,16 @@ struct tm timeinfo;
 uint8_t mac[6];
 String my_mac;
 
+QueueHandle_t q_sdcard;
+QueueHandle_t q_mqtt;
+
 // blink-per-message housekeeping
 int nBlinks = 0;
 bool led_state = 1;
 bool in_blink = false;
 unsigned long last_blink = 0;
+
+unsigned long last_status = 0;
 
 
 BLEScan* pBLEScan;
@@ -123,6 +127,7 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     // Construct a JSON-formatted string with device information
     DynamicJsonDocument json(JSON_OBJECT_SIZE(7));
+
     json["time"] = getIsoTime();
     json["mac"] = hexToStr(*advertisedDevice.getAddress().getNative(), 6);
 
@@ -141,25 +146,14 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
       json["name"] = advertisedDevice.getName().c_str();
     }
 
+
     char buffer[256];
-    size_t len = serializeJson(json, buffer);
+    serializeJson(json, buffer);
 
-    // Save line to file on sd card
-    // open new file if:
-    //    no existing file
-    //    current file is too large
-    //    UTC date has changed
-    //
-    
-    logger(buffer, sdcard_available);
+    xQueueSend(q_sdcard, buffer, 0);
+    xQueueSend(q_mqtt, buffer, 0);
 
 
-    // Publish the string via MQTT
-    if (mqtt.connected()) {
-      mqtt.beginPublish(topic.c_str(), len, false);
-      mqtt.print(buffer);
-      mqtt.endPublish();  // does nothing?
-    }
 
     // Blink for every received advertisement
     nBlinks += 1;
@@ -202,37 +196,7 @@ void startBLEScan(bool reinit=false)
 }
 
 
-/*
- * Called whenever a payload is received from a subscribed MQTT topic
- */
-void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
-  char buffer[256];
-  buffer[0] = 0;
 
-  int len = sprintf(buffer, "MQTT-receive %s ", topic);
-
-  //Serial.print(topic);
-  //Serial.print("] ");
-  for (int i = 0; i < length; i++) {
-    //Serial.print((char)payload[i]);
-    len += sprintf(buffer, "%02x", (char)payload[i]);
-  }
-  //Serial.println();
-  len += sprintf(buffer, "\n");
-
-  logger(buffer, sdcard_available);
-
-  // Switch on the LED if an 1 was received as first character
-  if ((char)payload[0] == '1') {
-    led_state = 1;
-  } else {
-    led_state = 0;
-  }
-
-  // this will effectively be a half-blink, forcing the LED to the
-  // requested state
-  nBlinks += 1;
-}
 
 
 /*
@@ -242,7 +206,7 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
 bool check_wifi(bool nowait)
 {
   if (WiFi.status() != WL_CONNECTED) {
-    logger("WiFi connecting", sdcard_available);
+    sdcard_logger("WiFi connecting");
     Serial.print("*");
     if ((millis() - last_wifi_check) >= WIFI_RETRY_DELAY) {
       int retries = 5;
@@ -257,9 +221,9 @@ bool check_wifi(bool nowait)
       if (retries == 0) {
         String msg = "WiFi: failed, waiting for " + String(WIFI_RETRY_DELAY/1000) + " seconds";
         Serial.println(msg);
-        logger(msg.c_str(), sdcard_available);
+        sdcard_logger(msg.c_str());
       } else {
-        logger(WiFi.localIP().toString().c_str(), sdcard_available);
+        sdcard_logger(WiFi.localIP().toString().c_str());
       }
 
       last_wifi_check = millis();
@@ -270,51 +234,6 @@ bool check_wifi(bool nowait)
   return (WiFi.status() == WL_CONNECTED);
 }
 
-
-/*
- * Check the MQTT connection state and attempt to reconnect.
- * If we do reconnect, then subscribe to MQTT_CONTROL_TOPIC and
- * make an announcement to MQTT_ANNOUNCE_TOPIC with the WiFi SSID and
- * local IP address.
- */
-bool check_mqtt()
-{
-  if (mqtt.connected()) { return true; }
-
-  // no point to continue if no network
-  if (WiFi.status() != WL_CONNECTED) { return false; }
-
-  // reconnect
-  Serial.print("MQTT reconnect...");
-  // Attempt to connect
-  int connect_status = mqtt.connect(my_mac.c_str(), MQTT_USER, MQTT_PASS,
-                   (MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
-                   2,  // willQoS
-                   1,  // willRetain
-                   "{\"state\":\"disconnected\"}");
-  if (connect_status) {
-    Serial.println("connected");
-    // Once connected, publish an announcement...
-    // JSON formatted payload
-    String msg = "{\"state\":\"connected\",\"ssid\":\"" + WiFi.SSID()
-                  + "\",\"ip\":\"" + WiFi.localIP().toString()
-                  + "\"}";
-    logger(msg.c_str(), sdcard_available);
-    mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
-                 msg.c_str(),
-                 true);
-
-    // ... and resubscribe
-    mqtt.subscribe((MQTT_PREFIX_TOPIC + my_mac + MQTT_CONTROL_TOPIC).c_str());
-  } else {
-    Serial.print("failed, rc=");
-    Serial.println(mqtt.state());
-    Serial.println(" try again in 5 seconds");
-    // Wait 5 seconds before retrying
-    //delay(5000);
-  }
-  return mqtt.connected();
-}
 
 
 /*
@@ -370,6 +289,8 @@ static esp_err_t init_sdcard()
 }
 
 
+TaskHandle_t MqttPublisherHandle;
+TaskHandle_t SdCardWriterHandle;
 
 void setup() {
   Serial.begin(115200);
@@ -393,13 +314,13 @@ void setup() {
 
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
-  logger(my_mac.c_str(), sdcard_available);
+  sdcard_logger(my_mac.c_str());
 
   while (wifiMulti.run() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
   }
-  logger(wifi.localIP().toString().c_str(), sdcard_available);
+  sdcard_logger(wifi.localIP().toString().c_str());
 
 
   /*
@@ -416,6 +337,20 @@ void setup() {
    */
   ntpClient.begin();
 
+
+  /*
+   * queues to handle writing packets to streams
+   */
+  q_sdcard = xQueueCreate(10, sizeof(char[256]));
+  if (q_sdcard == NULL) { Serial.println("Error creating q_sdcard"); }
+
+  q_mqtt = xQueueCreate(10, sizeof(char[256]));
+  if (q_mqtt == NULL) { Serial.println("Error creating q_mqtt"); }
+
+  xTaskCreate(vMqttPublisherTask, "MqttPublisher", 2500, (void *)0, 100, &MqttPublisherHandle);
+  xTaskCreate(vSdCardWriterTask, "SdCardWriter", 2500, (void *)0, 100, &SdCardWriterHandle);
+  vTaskStartScheduler();
+
 }
 
 
@@ -424,9 +359,9 @@ void setup() {
 void loop() {
   bool wifi_good;
   bool mqtt_good;
-  
+
   wifi_good = check_wifi(false);
-  mqtt_good = check_mqtt();
+  mqtt_good = mqtt_check();
 
   if (wifi_good) {
     ntpClient.update();
@@ -462,6 +397,21 @@ void loop() {
     } else {
       startBLEScan();
     }
+  }
+
+  now = millis();
+  if ((now - last_status) > 1000) {
+    Serial.print("q_sdcard.len: ");
+    Serial.print(uxQueueMessagesWaiting(q_sdcard));
+    Serial.print(", q_mqtt.len: ");
+    Serial.print(uxQueueMessagesWaiting(q_mqtt));
+    Serial.print(", MqttPub: ");
+    Serial.print(uxTaskGetStackHighWaterMark(MqttPublisherHandle));
+    Serial.print(", SdWrite: ");
+    Serial.print(uxTaskGetStackHighWaterMark(SdCardWriterHandle));
+    Serial.println();
+
+    last_status = now;
   }
 
   delay(1);
