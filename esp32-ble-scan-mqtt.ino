@@ -314,6 +314,7 @@ void setup() {
 
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
+  Serial.println();
   sdcard_logger(my_mac.c_str());
 
   while (wifiMulti.run() != WL_CONNECTED) {
