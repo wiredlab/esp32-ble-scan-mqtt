@@ -122,12 +122,6 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
       msg.concat("\"payload\":\"");
       msg.concat(hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength()));
       msg.concat("\",");
-      
-      if (advertisedDevice.haveName()) {
-        msg.concat("\"name\":\"");
-        msg.concat(advertisedDevice.getName().c_str());
-        msg.concat("\",");
-      }
 
       if (advertisedDevice.haveRSSI()) {
         msg.concat("\"rssi\":");
@@ -140,6 +134,13 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
         msg.concat(advertisedDevice.getTXPower());
         msg.concat(",");
       }
+
+      if (advertisedDevice.haveName()) {
+        msg.concat("\"name\":\"");
+        msg.concat(advertisedDevice.getName().c_str());
+        msg.concat("\",");
+      }
+
 
       // trim the final comma to ensure valid JSON
       if (msg.endsWith(",")) {
