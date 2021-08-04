@@ -110,11 +110,11 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
       // Construct a JSON-formatted string with device information
       String msg = "{";
       msg.reserve(300);
-      
+
       msg.concat("\"time\":\"");
       msg.concat(getIsoTime());
       msg.concat("\",");
-      
+
       msg.concat("\"mac\":\"");
       msg.concat(hexToStr(*advertisedDevice.getAddress().getNative(), 6));
       msg.concat("\",");
@@ -320,7 +320,7 @@ void setup() {
 
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
-  
+
   Serial.print("MAC: ");
   Serial.println(my_mac);
 
