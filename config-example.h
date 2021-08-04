@@ -9,11 +9,11 @@
 //   generic board: pin 2
 //   SparkFun ESP32 Thing: pin 5
 #define LED_PIN 2
-#define BLINK_MS 50
+#define BLINK_MS 20
 
 
 // WiFi config
-const char *WLAN_SSID[] = {"valpo-net"};
+const char *WLAN_SSID[] = {"valpo-media"};
 const char *WLAN_PASS[] = {"brownandgold"};
 const int NUM_WLANS = 1;
 
