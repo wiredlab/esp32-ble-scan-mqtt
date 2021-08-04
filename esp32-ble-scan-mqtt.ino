@@ -321,6 +321,9 @@ void setup() {
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
 
+  String hostname = "esp32-sniffer-" + my_mac;
+  WiFi.setHostname(hostname.c_str());
+
   Serial.print("MAC: ");
   Serial.println(my_mac);
 
