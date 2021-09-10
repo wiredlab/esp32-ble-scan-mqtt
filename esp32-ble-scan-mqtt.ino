@@ -122,7 +122,8 @@ String hexToStr(uint8_t* arr, int n)
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     // Construct a JSON-formatted string with device information
-    DynamicJsonDocument json(JSON_OBJECT_SIZE(7));
+    StaticJsonDocument<256> json;
+
     json["time"] = getIsoTime();
     json["mac"] = hexToStr(*advertisedDevice.getAddress().getNative(), 6);
 
