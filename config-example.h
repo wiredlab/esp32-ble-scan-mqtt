@@ -21,7 +21,11 @@ const int NUM_WLANS = 1;
 
 // SNTP time config
 const char *NTP_SERVER = "us.pool.ntp.org";
-const int NTP_UPDATE_INTERVAL = 600000;  // ms between NTP queries
+const unsigned long NTP_UPDATE_INTERVAL = 1800000;  // ms between NTP queries
+
+
+// Status updates
+const unsigned long STATUS_INTERVAL = 300000;  // ms between status messages
 
 
 // MQTT settings

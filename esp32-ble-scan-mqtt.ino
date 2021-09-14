@@ -76,9 +76,12 @@ String my_mac;
 
 // blink-per-message housekeeping
 int nBlinks = 0;
-bool led_state = 1;
+bool led_state = 0;
 bool in_blink = false;
 unsigned long last_blink = 0;
+
+// status update housekeeping
+unsigned long last_status = 0;
 
 
 BLEScan* pBLEScan;
@@ -294,28 +297,44 @@ bool check_mqtt()
                    1,  // willRetain
                    "{\"state\":\"disconnected\"}");
   if (connect_status) {
-    Serial.println("connected");
-    // Once connected, publish an announcement...
-    // JSON formatted payload
-    String msg = "{\"state\":\"connected\",\"ssid\":\"" + WiFi.SSID()
-                  + "\",\"ip\":\"" + WiFi.localIP().toString()
-                  + "\"}";
-    logger(msg.c_str(), sdcard_available);
-    mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
-                 msg.c_str(),
-                 true);
+    // let everyone know we are alive
+    pub_status_mqtt();
 
-    // ... and resubscribe
+    // ... and resubscribe to downlink topic
     mqtt.subscribe((MQTT_PREFIX_TOPIC + my_mac + MQTT_CONTROL_TOPIC).c_str());
   } else {
     Serial.print("failed, rc=");
     Serial.println(mqtt.state());
-    Serial.println(" try again in 5 seconds");
-    // Wait 5 seconds before retrying
-    //delay(5000);
   }
   return mqtt.connected();
 }
+
+
+/*
+ * Publish a status message with system telemetry.
+ */
+bool pub_status_mqtt()
+{
+  if (mqtt.connected()) {
+    // JSON formatted payload
+    StaticJsonDocument<256> status_json;
+    status_json["state"] = "connected";
+    status_json["time"] = getIsoTime();
+    status_json["uptime_ms"] = millis();
+    status_json["ssid"] = WiFi.SSID();
+    status_json["ip"] = WiFi.localIP().toString();
+
+    char buf[256];
+    size_t len = serializeJson(status_json, buf);
+
+    logger(buf, sdcard_available);
+    return mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
+                        buf,
+                        true);
+  }
+  return false;
+}
+
 
 
 /*
@@ -416,6 +435,7 @@ void setup() {
    * setup NTP time sync
    */
   ntpClient.begin();
+  ntpClient.update();
 
 }
 
@@ -438,8 +458,13 @@ void loop() {
     //celebrate!
   }
 
-  // Handle blinking without using delay()
+
+  /*
+   * Handle periodic events
+   */
   unsigned long now = millis();
+
+  // Handle blinking without using delay()
   if (nBlinks > 0) {
     if (now - last_blink >= BLINK_MS) {
       last_blink = now;
@@ -453,6 +478,15 @@ void loop() {
       }
     }
   }
+
+  if (now - last_status >= STATUS_INTERVAL) {
+    pub_status_mqtt();
+    last_status = now;
+  }
+  /*
+   * end periodic events
+   */
+
 
   // Setup BLE scanning and restart a scan
   // only fire off a new scan if we are not already scanning!
