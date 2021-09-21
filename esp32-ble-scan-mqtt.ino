@@ -65,6 +65,13 @@
 
 #include "logger.h"
 
+/* https://github.com/fabianoriccardi/git-describe-arduino
+ * add a GIT_VERSION string that is updated every compile event
+ */
+#include "git-version.h"
+
+
+
 /*
  * globals
  */
@@ -329,6 +336,7 @@ bool pub_status_mqtt()
     nPackets = 0;
     status_json["ssid"] = WiFi.SSID();
     status_json["ip"] = WiFi.localIP().toString();
+    status_json["version"] = GIT_VERSION;
 
     char buf[256];
     size_t len = serializeJson(status_json, buf);
