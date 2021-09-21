@@ -78,10 +78,11 @@ String my_mac;
 int nBlinks = 0;
 bool led_state = 0;
 bool in_blink = false;
-unsigned long last_blink = 0;
+typeof(millis()) last_blink = 0;
 
 // status update housekeeping
 unsigned long last_status = 0;
+unsigned long nPackets = 0;
 
 
 BLEScan* pBLEScan;
@@ -167,6 +168,9 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
 
     // Blink for every received advertisement
     nBlinks += 1;
+
+    // Count packets heard
+    nPackets += 1;
 
     //Serial.println(buffer);
   }
@@ -321,6 +325,8 @@ bool pub_status_mqtt()
     status_json["state"] = "connected";
     status_json["time"] = getIsoTime();
     status_json["uptime_ms"] = millis();
+    status_json["packets"] = nPackets;
+    nPackets = 0;
     status_json["ssid"] = WiFi.SSID();
     status_json["ip"] = WiFi.localIP().toString();
 
