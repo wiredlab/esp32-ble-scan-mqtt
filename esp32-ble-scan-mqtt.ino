@@ -407,7 +407,7 @@ void setup() {
   /*
    * SD card init
    */
-  init_sdcard();
+  //init_sdcard();
 
   /*
    * setup WiFi

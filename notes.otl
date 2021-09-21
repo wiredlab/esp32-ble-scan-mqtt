@@ -13,6 +13,9 @@ Continuously sniff BLE adv packets
 Logging
 	MQTT
 		topic: esp32-sniffer/<MAC>/status
-			:w
-			:
-l
+
+
+Notes
+	uSD card conflicts with builtin LED pin, CANNOT use both
+
+
