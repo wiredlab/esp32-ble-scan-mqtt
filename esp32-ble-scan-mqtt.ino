@@ -88,7 +88,7 @@ bool in_blink = false;
 typeof(millis()) last_blink = 0;
 
 // status update housekeeping
-unsigned long last_status = 0;
+unsigned long last_status = 30000;  // nonzero to defer our first status until triggered
 unsigned long nPackets = 0;
 
 
@@ -309,7 +309,7 @@ bool check_mqtt()
                    "{\"state\":\"disconnected\"}");
   if (connect_status) {
     // let everyone know we are alive
-    pub_status_mqtt();
+    pub_status_mqtt("connected");
 
     // ... and resubscribe to downlink topic
     mqtt.subscribe((MQTT_PREFIX_TOPIC + my_mac + MQTT_CONTROL_TOPIC).c_str());
@@ -324,12 +324,12 @@ bool check_mqtt()
 /*
  * Publish a status message with system telemetry.
  */
-bool pub_status_mqtt()
+bool pub_status_mqtt(const char *state)
 {
   if (mqtt.connected()) {
     // JSON formatted payload
     StaticJsonDocument<256> status_json;
-    status_json["state"] = "connected";
+    status_json["state"] = state;
     status_json["time"] = getIsoTime();
     status_json["uptime_ms"] = millis();
     status_json["packets"] = nPackets;
@@ -337,6 +337,8 @@ bool pub_status_mqtt()
     status_json["ssid"] = WiFi.SSID();
     status_json["ip"] = WiFi.localIP().toString();
     status_json["version"] = GIT_VERSION;
+
+    last_status = millis();
 
     char buf[256];
     size_t len = serializeJson(status_json, buf);
@@ -494,8 +496,15 @@ void loop() {
   }
 
   if (now - last_status >= STATUS_INTERVAL) {
-    pub_status_mqtt();
-    last_status = now;
+    if (nPackets > 0) {
+      pub_status_mqtt("status");
+    } else {
+      // no heard packets is a potential problem
+      pub_status_mqtt("restarting");
+      ESP.restart();
+    }
+
+    // last_status is updated in pub_status_mqtt()
   }
   /*
    * end periodic events
