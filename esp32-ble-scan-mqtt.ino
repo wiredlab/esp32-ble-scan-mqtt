@@ -256,32 +256,27 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
  */
 bool check_wifi()
 {
-  if (WiFi.status() != WL_CONNECTED) {
-    logger("WiFi connecting", sdcard_available);
-    Serial.print("*");
+  if (cold_boot || WiFi.status() != WL_CONNECTED) {
     if ((millis() - last_wifi_check) >= WIFI_RETRY_DELAY) {
-      int retries = 5;
+      logger("WiFi connecting", sdcard_available);
       Serial.print("*");
-      while (wifiMulti.run() != WL_CONNECTED) {
+      int retries = 5;
+      //Serial.print("*");
+      while (retries > 0 && wifiMulti.run() != WL_CONNECTED) {
         delay(500);
         Serial.print(".");
         retries--;
-        if (retries == 0) { break; }
       }
 
       if (retries == 0) {
-        String msg = "WiFi: failed, waiting for " + String(WIFI_RETRY_DELAY/1000) + " seconds";
-        Serial.println(msg);
+        String msg = "WiFi: failed, waiting for " + String(WIFI_RETRY_DELAY/1000) + " seconds before trying again";
         logger(msg.c_str(), sdcard_available);
       } else {
         logger(WiFi.localIP().toString().c_str(), sdcard_available);
       }
-
       last_wifi_check = millis();
-    } else {
-      Serial.print("x");
-    }
-  }
+    } // retry delay
+  } // !connected
   return (WiFi.status() == WL_CONNECTED);
 }
 
@@ -411,13 +406,15 @@ void setup() {
   Serial.begin(115200);
   Serial.println();
 
+  Serial.print("LED pin: ");
+  Serial.print(LED_PIN);
   pinMode(LED_PIN, OUTPUT);
   digitalWrite(LED_PIN, led_state);
 
   /*
    * SD card init
    */
-  //init_sdcard();
+  init_sdcard();
 
   /*
    * setup WiFi
@@ -431,9 +428,11 @@ void setup() {
   my_mac = hexToStr(mac, 6);
   logger(my_mac.c_str(), sdcard_available);
 
-  while (wifiMulti.run() != WL_CONNECTED) {
+  int retries = 5;
+  while (retries > 0 && wifiMulti.run() != WL_CONNECTED) {
     delay(500);
     Serial.print(".");
+    retries--;
   }
   logger(wifi.localIP().toString().c_str(), sdcard_available);
 
@@ -475,6 +474,18 @@ void loop() {
   }
 
 
+  // Setup BLE scanning and restart a scan
+  // only fire off a new scan if we are not already scanning!
+  if (not is_scanning) {
+    if (cold_boot) {
+      startBLEScan(true);
+      cold_boot = false;
+    } else {
+      startBLEScan();
+    }
+  }
+
+
   /*
    * Handle periodic events
    */
@@ -495,32 +506,28 @@ void loop() {
     }
   }
 
+  static int no_packet_intervals = NO_PACKETS_INTERVALS_ZOMBIE_RESTART;
   if (now - last_status >= STATUS_INTERVAL) {
-    if (nPackets > 0) {
-      pub_status_mqtt("status");
-    } else {
-      // no heard packets is a potential problem
-      //pub_status_mqtt("restarting");
-      //ESP.restart();
-    }
+    pub_status_mqtt("status");
 
+    if (nPackets > 0) {
+      no_packet_intervals = NO_PACKETS_INTERVALS_ZOMBIE_RESTART;
+    } else {
+      Serial.println("no packets :(");
+      no_packet_intervals--;
+
+      if (no_packet_intervals == 0) {
+        // no heard packets is a potential problem
+        pub_status_mqtt("restarting");
+        ESP.restart();
+      }
+    }
     // last_status is updated in pub_status_mqtt()
   }
   /*
    * end periodic events
    */
 
-
-  // Setup BLE scanning and restart a scan
-  // only fire off a new scan if we are not already scanning!
-  if (not is_scanning) {
-    if (cold_boot) {
-      startBLEScan(true);
-      cold_boot = false;
-    } else {
-      startBLEScan();
-    }
-  }
 
   delay(1);
 }
