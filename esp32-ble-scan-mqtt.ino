@@ -1,7 +1,7 @@
 /*
  * Hardware target:
- *  ESP32 DEVKIT V1
  *  generic boards from eBay/Amazon with ESP32-WROOM-32 module
+ *    --> ESP32 DEVKIT V1
  *
  * IDE setup:
  *  Board:  ESP32 Dev Module
@@ -106,7 +106,7 @@ unsigned long last_wifi_check = 0;
 unsigned long last_mqtt_check = 0;
 
 
-bool sdcard_available = false;
+volatile bool sdcard_available = false;
 
 
 /*
@@ -254,7 +254,7 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
  * Check WiFi connection, attempt to reconnect.
  * This blocks until a connection is (re)established.
  */
-bool check_wifi(bool nowait)
+bool check_wifi()
 {
   if (WiFi.status() != WL_CONNECTED) {
     logger("WiFi connecting", sdcard_available);
@@ -326,29 +326,31 @@ bool check_mqtt()
  */
 bool pub_status_mqtt(const char *state)
 {
+  // JSON formatted payload
+  StaticJsonDocument<256> status_json;
+  status_json["state"] = state;
+  status_json["time"] = getIsoTime();
+  status_json["uptime_ms"] = millis();
+  status_json["packets"] = nPackets;
+  nPackets = 0;
+  status_json["ssid"] = WiFi.SSID();
+  status_json["ip"] = WiFi.localIP().toString();
+  status_json["version"] = GIT_VERSION;
+
+  last_status = millis();
+
+  char buf[256];
+  size_t len = serializeJson(status_json, buf);
+
+  logger(buf, sdcard_available);
+
   if (mqtt.connected()) {
-    // JSON formatted payload
-    StaticJsonDocument<256> status_json;
-    status_json["state"] = state;
-    status_json["time"] = getIsoTime();
-    status_json["uptime_ms"] = millis();
-    status_json["packets"] = nPackets;
-    nPackets = 0;
-    status_json["ssid"] = WiFi.SSID();
-    status_json["ip"] = WiFi.localIP().toString();
-    status_json["version"] = GIT_VERSION;
-
-    last_status = millis();
-
-    char buf[256];
-    size_t len = serializeJson(status_json, buf);
-
-    logger(buf, sdcard_available);
     return mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
                         buf,
                         true);
+  } else {
+    return false;
   }
-  return false;
 }
 
 
@@ -366,13 +368,11 @@ String getIsoTime()
   localtime_r(&time_now, &timeinfo);
 
   if (timeinfo.tm_year <= (2016 - 1900)) {
-    Serial.println("Failed to obtain time.");
-    timeStr[0] = 0;
     return String("YYYY-MM-DDTHH:MM:SSZ");
+  } else {
+    strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
+    return String(timeStr);
   }
-
-  strftime(timeStr, sizeof(timeStr), "%Y-%m-%dT%H:%M:%SZ", &timeinfo);
-  return String(timeStr);
 }
 
 
@@ -381,7 +381,7 @@ String getIsoTime()
  * 
  * Setup the SD card for 
  */
-static esp_err_t init_sdcard()
+esp_err_t init_sdcard()
 {
   esp_err_t ret = ESP_FAIL;
   sdmmc_host_t host = SDMMC_HOST_DEFAULT();
@@ -462,7 +462,7 @@ void loop() {
   bool wifi_good;
   bool mqtt_good;
   
-  wifi_good = check_wifi(false);
+  wifi_good = check_wifi();
   mqtt_good = check_mqtt();
 
   if (wifi_good) {
@@ -500,8 +500,8 @@ void loop() {
       pub_status_mqtt("status");
     } else {
       // no heard packets is a potential problem
-      pub_status_mqtt("restarting");
-      ESP.restart();
+      //pub_status_mqtt("restarting");
+      //ESP.restart();
     }
 
     // last_status is updated in pub_status_mqtt()
