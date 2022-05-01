@@ -31,15 +31,14 @@
  */
 
 
-
+// all 3 WiFi libraries from
+// https://github.com/espressif/arduino-esp32
+// already installed with ESP32 package
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WiFiMulti.h>
-#include <NTPClient.h>
-#include <PubSubClient.h>
+
 #include "time.h"
-#include <ArduinoJson.h>
-#
 
 // MicroSD
 #include "driver/sdmmc_host.h"
@@ -47,14 +46,27 @@
 #include "sdmmc_cmd.h"
 #include "esp_vfs_fat.h"
 
-/*
- * available in the Library Manger
- * https://github.com/nkolban/ESP32_BLE_Arduino
- */
+// BLE is now installed with the Espressif/ESP32 Arduino package
 #include <BLEDevice.h>
 #include <BLEUtils.h>
 #include <BLEScan.h>
 #include <BLEAdvertisedDevice.h>
+
+
+/*
+ * Extra libraries installed from the Library Manager
+ */
+// https://github.com/arduino-libraries/NTPClient
+#include <NTPClient.h>
+
+// https://pubsubclient.knolleary.net/
+// PubSubClient by Nick O'Leary
+#include <PubSubClient.h>
+
+// https://arduinojson.org/
+#include <ArduinoJson.h>
+
+
 
 
 /*
