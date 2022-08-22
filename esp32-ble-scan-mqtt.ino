@@ -327,12 +327,9 @@ bool pub_status_mqtt(const char *state)
   status_json["time"] = getIsoTime();
   status_json["uptime_ms"] = millis();
   status_json["packets"] = nPackets;
-  nPackets = 0;
   status_json["ssid"] = WiFi.SSID();
   status_json["ip"] = WiFi.localIP().toString();
   status_json["version"] = GIT_VERSION;
-
-  last_status = millis();
 
   char buf[256];
   size_t len = serializeJson(status_json, buf);
@@ -522,7 +519,9 @@ void loop() {
         ESP.restart();
       }
     }
-    // last_status is updated in pub_status_mqtt()
+
+    nPackets = 0;
+    last_status = millis();
   }
   /*
    * end periodic events
