@@ -344,7 +344,7 @@ bool pub_status_mqtt(const char *state)
   status_json["version"] = GIT_VERSION;
 
   char buf[256];
-  size_t len = serializeJson(status_json, buf);
+  serializeJson(status_json, buf);
 
   logger(buf, sdcard_available);
 
@@ -393,6 +393,7 @@ esp_err_t init_sdcard()
   esp_vfs_fat_sdmmc_mount_config_t mount_config = {
     .format_if_mount_failed = false,
     .max_files = 1,
+    .allocation_unit_size = 512,
   };
   sdmmc_card_t *card;
 
