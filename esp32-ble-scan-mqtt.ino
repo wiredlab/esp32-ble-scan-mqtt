@@ -5,6 +5,7 @@
  *
  * IDE setup:
  *  Board:  ESP32 Dev Module
+ *    add package via:  https://raw.githubusercontent.com/espressif/arduino-esp32/gh-pages/package_esp32_index.json
  *  CPU frequency: 240MHz (WiFi/BT)
  *  Flash frequency: 80MHz
  *  Flash size: 4MB (32Mb)
@@ -94,7 +95,7 @@ uint8_t mac[6];
 String my_mac;
 
 // blink-per-message housekeeping
-int nBlinks = 0;
+unsigned int nBlinks = 0;
 bool led_state = 0;
 bool in_blink = false;
 typeof(millis()) last_blink = 0;
@@ -416,15 +417,33 @@ void setup() {
   Serial.begin(115200);
   Serial.println();
 
-  Serial.print("LED pin: ");
-  Serial.print(LED_PIN);
-  pinMode(LED_PIN, OUTPUT);
-  digitalWrite(LED_PIN, led_state);
 
   /*
    * SD card init
    */
   init_sdcard();
+
+  /*
+   * TODO: LED is normall on pin 2, unless this is the esp32-cam board.
+   * There, pin 2 is used for the uSD card interface (HS2_DATA0).
+   * Attempting to initialize the uSD card changes the pin modes, so we must change
+   * the LED pin back if there is in fact no uSD card connected.
+   */
+  Serial.print("LED pin: ");
+  if (!sdcard_available) {
+    Serial.println(LED_PIN);
+    pinMode(LED_PIN, OUTPUT);
+  } else {
+    /*
+     * assume at this point that this is the esp32-cam board,
+     * which has an LED on GPIO33
+     */
+    Serial.print("LED pin: ");
+    Serial.println(33);
+    pinMode(33, OUTPUT);
+  }
+  digitalWrite(LED_PIN, led_state);
+
 
   /*
    * setup WiFi
