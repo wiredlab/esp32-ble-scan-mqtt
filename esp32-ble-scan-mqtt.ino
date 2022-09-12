@@ -343,6 +343,7 @@ bool pub_status_mqtt(const char *state)
   status_json["ssid"] = WiFi.SSID();
   status_json["rssi"] = WiFi.RSSI();
   status_json["ip"] = WiFi.localIP().toString();
+  status_json["hostname"] = WiFi.getHostname();
   status_json["version"] = GIT_VERSION;
 
   char buf[256];
@@ -456,7 +457,12 @@ void setup() {
 
   WiFi.macAddress(mac);
   my_mac = hexToStr(mac, 6);
-  logger(my_mac.c_str(), sdcard_available);
+  String msg = "\nMAC: " + my_mac;
+  logger(msg.c_str(), sdcard_available);
+
+  msg = "ValpoSensorNet-" + my_mac;
+  WiFi.setHostname(msg.c_str());
+
 
   int retries = 5;
   while (retries > 0 && wifiMulti.run() != WL_CONNECTED) {
