@@ -341,6 +341,7 @@ bool pub_status_mqtt(const char *state)
   status_json["uptime_ms"] = millis();
   status_json["packets"] = nPackets;
   status_json["ssid"] = WiFi.SSID();
+  status_json["rssi"] = WiFi.RSSI();
   status_json["ip"] = WiFi.localIP().toString();
   status_json["version"] = GIT_VERSION;
 
