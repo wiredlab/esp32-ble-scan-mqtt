@@ -408,6 +408,7 @@ esp_err_t init_sdcard()
   }  else  {
     sdcard_available = false;
     Serial.printf("Failed to mount SD card VFAT filesystem. Error: %s", esp_err_to_name(ret));
+    Serial.println();
   }
   return ret;
 }
