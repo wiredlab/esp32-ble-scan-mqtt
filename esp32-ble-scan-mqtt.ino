@@ -242,14 +242,10 @@ void mqtt_receive_callback(char* topic, byte* payload, unsigned int length) {
 
   int len = sprintf(buffer, "MQTT-receive %s ", topic);
 
-  //Serial.print(topic);
-  //Serial.print("] ");
   for (int i = 0; i < length; i++) {
-    //Serial.print((char)payload[i]);
-    len += sprintf(buffer, "%02x", (char)payload[i]);
+    len += sprintf(&buffer[len], "%02x", (unsigned char)payload[i]);
   }
-  //Serial.println();
-  len += sprintf(buffer, "\n");
+  len += sprintf(&buffer[len], "\n");
 
   logger(buffer, sdcard_available);
 
