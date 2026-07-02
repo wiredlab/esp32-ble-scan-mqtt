@@ -121,6 +121,18 @@ PubSubClient mqtt(wifi);
 unsigned long last_wifi_check = 0;
 unsigned long last_mqtt_check = 0;
 
+const uint8_t MQTT_PUBLISH_QUEUE_SIZE = 32;
+
+struct MqttPublishMessage {
+  size_t len;
+  char payload[256];
+};
+
+MqttPublishMessage mqttPublishQueue[MQTT_PUBLISH_QUEUE_SIZE];
+volatile uint8_t mqttPublishHead = 0;
+volatile uint8_t mqttPublishTail = 0;
+volatile unsigned long mqttPublishDropped = 0;
+
 
 volatile bool sdcard_available = false;
 
@@ -139,6 +151,43 @@ String hexToStr(uint8_t* arr, int n)
     result += String(arr[i], HEX);
   }
   return result;
+}
+
+
+bool queueMqttPublish(const char *payload, size_t len)
+{
+  uint8_t nextHead = (mqttPublishHead + 1) % MQTT_PUBLISH_QUEUE_SIZE;
+
+  if (nextHead == mqttPublishTail) {
+    mqttPublishDropped++;
+    return false;
+  }
+
+  MqttPublishMessage *msg = &mqttPublishQueue[mqttPublishHead];
+  msg->len = min(len, sizeof(msg->payload) - 1);
+  memcpy(msg->payload, payload, msg->len);
+  msg->payload[msg->len] = '\0';
+  mqttPublishHead = nextHead;
+  return true;
+}
+
+
+void drainMqttPublishQueue(uint8_t maxMessages)
+{
+  uint8_t published = 0;
+
+  while (mqtt.connected() &&
+         mqttPublishTail != mqttPublishHead &&
+         published < maxMessages) {
+    MqttPublishMessage *msg = &mqttPublishQueue[mqttPublishTail];
+
+    mqtt.beginPublish(topic.c_str(), msg->len, false);
+    mqtt.write((const uint8_t *)msg->payload, msg->len);
+    mqtt.endPublish();  // does nothing?
+
+    mqttPublishTail = (mqttPublishTail + 1) % MQTT_PUBLISH_QUEUE_SIZE;
+    published++;
+  }
 }
 
 
@@ -178,16 +227,10 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     //    current file is too large
     //    UTC date has changed
     //
-    
     logger(buffer, sdcard_available);
 
-
     // Publish the string via MQTT
-    if (mqtt.connected()) {
-      mqtt.beginPublish(topic.c_str(), len, false);
-      mqtt.print(buffer);
-      mqtt.endPublish();  // does nothing?
-    }
+    queueMqttPublish(buffer, len);
 
     // Blink for every received advertisement
     nBlinks += 1;
@@ -339,6 +382,7 @@ bool pub_status_mqtt(const char *state)
   status_json["time"] = getIsoTime();
   status_json["uptime_ms"] = millis();
   status_json["packets"] = nPackets;
+  status_json["dropped"] = mqttPublishDropped;
   status_json["ssid"] = WiFi.SSID();
   status_json["rssi"] = WiFi.RSSI();
   status_json["ip"] = WiFi.localIP().toString();
@@ -507,7 +551,7 @@ void loop() {
   }
 
   if (mqtt_good) {
-    //celebrate!
+    drainMqttPublishQueue(4);
   }
 
 
