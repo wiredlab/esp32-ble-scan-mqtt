@@ -47,6 +47,9 @@
 #include "sdmmc_cmd.h"
 #include "esp_vfs_fat.h"
 
+// espressif to get MAC before startup
+#include "esp_mac.h"
+
 // BLE is now installed with the Espressif/ESP32 Arduino package
 #include <BLEDevice.h>
 #include <BLEUtils.h>
@@ -146,10 +149,10 @@ String hexToStr(uint8_t* arr, int n)
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
     // Construct a JSON-formatted string with device information
-    StaticJsonDocument<256> json;
+    JsonDocument json;
 
     json["time"] = getIsoTime();
-    json["mac"] = hexToStr(*advertisedDevice.getAddress().getNative(), 6);
+    json["mac"] = hexToStr(advertisedDevice.getAddress().getNative(), 6);
 
     String payload = hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength());
     json["payload"] = payload.c_str();
@@ -335,7 +338,7 @@ bool check_mqtt()
 bool pub_status_mqtt(const char *state)
 {
   // JSON formatted payload
-  StaticJsonDocument<256> status_json;
+  JsonDocument status_json;
   status_json["state"] = state;
   status_json["time"] = getIsoTime();
   status_json["uptime_ms"] = millis();
@@ -450,19 +453,20 @@ void setup() {
   /*
    * setup WiFi
    */
-  //WiFi.mode(WIFI_STA);
-  for (int i=0; i<NUM_WLANS; i++) {
-    wifiMulti.addAP(WLAN_SSID[i], WLAN_PASS[i]);
-  }
-
-  WiFi.macAddress(mac);
+  esp_read_mac(mac, ESP_MAC_WIFI_STA);
   my_mac = hexToStr(mac, 6);
+
   String msg = "\nMAC: " + my_mac;
   logger(msg.c_str(), sdcard_available);
 
   msg = "ValpoSensorNet-" + my_mac;
   WiFi.setHostname(msg.c_str());
 
+  WiFi.mode(WIFI_STA);
+
+  for (int i=0; i<NUM_WLANS; i++) {
+    wifiMulti.addAP(WLAN_SSID[i], WLAN_PASS[i]);
+  }
 
   int retries = 5;
   while (retries > 0 && wifiMulti.run() != WL_CONNECTED) {
