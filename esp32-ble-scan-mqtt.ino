@@ -219,7 +219,7 @@ static void formatIsoTimeFromEpoch(uint32_t epoch, char *out, size_t outSize)
 
 static void hexToBuffer(const uint8_t *src, size_t srcLen, char *out, size_t outSize)
 {
-  static const char hex[] = "0123456789abcdef";
+  static const char hex[] = "0123456789ABCDEF";
   size_t pos = 0;
 
   if (outSize == 0) {
@@ -228,142 +228,9 @@ static void hexToBuffer(const uint8_t *src, size_t srcLen, char *out, size_t out
 
   for (size_t i = 0; i < srcLen && pos + 2 < outSize; i++) {
     out[pos++] = hex[src[i] >> 4];
-    out[pos++] = hex[src[i] & 0x0f];
+    out[pos++] = hex[src[i] & 0x0F];
   }
   out[pos] = '\0';
-}
-
-
-static bool appendJsonFormat(char *out, size_t outSize, size_t *pos, const char *fmt, ...)
-{
-  if (*pos >= outSize) {
-    return false;
-  }
-
-  va_list args;
-  va_start(args, fmt);
-  int written = vsnprintf(out + *pos, outSize - *pos, fmt, args);
-  va_end(args);
-
-  if (written < 0) {
-    return false;
-  }
-
-  if ((size_t)written >= outSize - *pos) {
-    *pos = outSize - 1;
-    out[*pos] = '\0';
-    return false;
-  }
-
-  *pos += (size_t)written;
-  return true;
-}
-
-
-static bool appendJsonComma(char *out, size_t outSize, size_t *pos, bool *needsComma)
-{
-  if (*needsComma && !appendJsonFormat(out, outSize, pos, ",")) {
-    return false;
-  }
-
-  *needsComma = true;
-  return true;
-}
-
-
-static bool appendJsonStringEscaped(char *out,
-                             size_t outSize,
-                             size_t *pos,
-                             const uint8_t *src,
-                             size_t srcLen)
-{
-  for (size_t i = 0; i < srcLen; i++) {
-    uint8_t c = src[i];
-
-    switch (c) {
-      case '"':
-      case '\\':
-        if (!appendJsonFormat(out, outSize, pos, "\\%c", c)) {
-          return false;
-        }
-        break;
-      case '\b':
-        if (!appendJsonFormat(out, outSize, pos, "\\b")) {
-          return false;
-        }
-        break;
-      case '\f':
-        if (!appendJsonFormat(out, outSize, pos, "\\f")) {
-          return false;
-        }
-        break;
-      case '\n':
-        if (!appendJsonFormat(out, outSize, pos, "\\n")) {
-          return false;
-        }
-        break;
-      case '\r':
-        if (!appendJsonFormat(out, outSize, pos, "\\r")) {
-          return false;
-        }
-        break;
-      case '\t':
-        if (!appendJsonFormat(out, outSize, pos, "\\t")) {
-          return false;
-        }
-        break;
-      default:
-        if (c < 0x20) {
-          if (!appendJsonFormat(out, outSize, pos, "\\u%04x", c)) {
-            return false;
-          }
-        } else if (!appendJsonFormat(out, outSize, pos, "%c", c)) {
-          return false;
-        }
-        break;
-    }
-  }
-
-  return true;
-}
-
-
-static bool appendJsonStringField(char *out,
-                           size_t outSize,
-                           size_t *pos,
-                           bool *needsComma,
-                           const char *key,
-                           const char *value)
-{
-  return appendJsonComma(out, outSize, pos, needsComma) &&
-         appendJsonFormat(out, outSize, pos, "\"%s\":\"%s\"", key, value);
-}
-
-
-static bool appendJsonEscapedStringField(char *out,
-                                  size_t outSize,
-                                  size_t *pos,
-                                  bool *needsComma,
-                                  const char *key,
-                                  const uint8_t *value,
-                                  size_t valueLen)
-{
-  return appendJsonComma(out, outSize, pos, needsComma) &&
-         appendJsonFormat(out, outSize, pos, "\"%s\":\"", key) &&
-         appendJsonStringEscaped(out, outSize, pos, value, valueLen) &&
-         appendJsonFormat(out, outSize, pos, "\"");
-}
-
-
-static bool appendJsonIntField(char *out,
-                        size_t outSize,
-                        size_t *pos,
-                        bool *needsComma,
-                        const char *key,
-                        long value)
-{
-  return appendJsonComma(out, outSize, pos, needsComma) &&
-         appendJsonFormat(out, outSize, pos, "\"%s\":%ld", key, value);
 }
 
 
@@ -415,7 +282,7 @@ static void decodeAdvertisementPayload(const uint8_t *payload,
           decoded->completeNameLen = dataLen;
         }
         break;
-      case 0x0a:
+      case 0x0A:
         if (dataLen >= 1) {
           decoded->haveTxPower = true;
           decoded->txPower = (int8_t)data[0];
@@ -436,8 +303,6 @@ static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out
   char macStr[13];
   char payloadStr[ADV_MAX_PAYLOAD_SIZE * 2 + 1];
   DecodedAdvertisement decoded;
-  size_t pos = 0;
-  bool needsComma = false;
 
   if (outSize == 0) {
     return 0;
@@ -448,44 +313,32 @@ static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out
   hexToBuffer(msg->payload, msg->payloadLen, payloadStr, sizeof(payloadStr));
   decodeAdvertisementPayload(msg->payload, msg->payloadLen, &decoded);
 
-  bool ok = appendJsonFormat(out, outSize, &pos, "{") &&
-            appendJsonStringField(out, outSize, &pos, &needsComma, "time", timeStr) &&
-            appendJsonStringField(out, outSize, &pos, &needsComma, "mac", macStr) &&
-            appendJsonStringField(out, outSize, &pos, &needsComma, "payload", payloadStr) &&
-            appendJsonIntField(out, outSize, &pos, &needsComma, "rssi", msg->rssi);
+  JsonDocument json;
+  json["time"] = timeStr;
+  json["mac"] = macStr;
+  json["payload"] = payloadStr;
+  json["rssi"] = msg->rssi;
 
-  if (ok && msg->hasTxPower) {
-    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", msg->txPower);
-  } else if (ok && decoded.haveTxPower) {
-    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", decoded.txPower);
+  if (msg->hasTxPower) {
+    json["tx"] = msg->txPower;
+  } else if (decoded.haveTxPower) {
+    json["tx"] = decoded.txPower;
   }
 
-  if (ok && decoded.haveShortName) {
-    ok = appendJsonEscapedStringField(out,
-                                      outSize,
-                                      &pos,
-                                      &needsComma,
-                                      "name_short",
-                                      decoded.shortName,
-                                      decoded.shortNameLen);
+  if (decoded.haveShortName) {
+    json["name_short"] = JsonString((const char *)decoded.shortName, decoded.shortNameLen);
   }
 
-  if (ok && decoded.haveCompleteName) {
-    ok = appendJsonEscapedStringField(out,
-                                      outSize,
-                                      &pos,
-                                      &needsComma,
-                                      "name_complete",
-                                      decoded.completeName,
-                                      decoded.completeNameLen);
+  if (decoded.haveCompleteName) {
+    json["name_complete"] = JsonString((const char *)decoded.completeName, decoded.completeNameLen);
   }
 
-  if (!ok || !appendJsonFormat(out, outSize, &pos, "}")) {
+  if (measureJson(json) >= outSize) {
     snprintf(out, outSize, "{\"error\":\"advertisement_json_overflow\"}");
     return strlen(out);
   }
 
-  return pos;
+  return serializeJson(json, out, outSize);
 }
 
 
