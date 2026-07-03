@@ -201,10 +201,11 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     JsonDocument json;
 
     json["time"] = getIsoTime();
-    json["mac"] = hexToStr(advertisedDevice.getAddress().getNative(), 6);
+    String mac = hexToStr(advertisedDevice.getAddress().getNative(), 6);
+    json["mac"] = mac;
 
     String payload = hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength());
-    json["payload"] = payload.c_str();
+    json["payload"] = payload;
 
     if (advertisedDevice.haveRSSI()) {
       json["rssi"] = advertisedDevice.getRSSI();
@@ -215,11 +216,12 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     }
 
     if (advertisedDevice.haveName()) {
-      json["name"] = advertisedDevice.getName().c_str();
+      String name = advertisedDevice.getName();
+      json["name"] = name;
     }
 
     char buffer[256];
-    size_t len = serializeJson(json, buffer);
+    size_t len = serializeJson(json, buffer, sizeof(buffer));
 
     // Save line to file on sd card
     // open new file if:
@@ -383,6 +385,8 @@ bool pub_status_mqtt(const char *state)
   status_json["uptime_ms"] = millis();
   status_json["packets"] = nPackets;
   status_json["dropped"] = mqttPublishDropped;
+  status_json["dropped_serial"] = serialLogDropped;
+  status_json["dropped_sd"] = sdLogDropped;
   status_json["ssid"] = WiFi.SSID();
   status_json["rssi"] = WiFi.RSSI();
   status_json["ip"] = WiFi.localIP().toString();
@@ -390,7 +394,7 @@ bool pub_status_mqtt(const char *state)
   status_json["version"] = GIT_VERSION;
 
   char buf[256];
-  serializeJson(status_json, buf);
+  serializeJson(status_json, buf, sizeof(buf));
 
   logger(buf, sdcard_available);
 
@@ -549,6 +553,8 @@ void loop() {
     ntpClient.update();
     mqtt.loop();
   }
+
+  drainLogQueues(8, 4, sdcard_available);
 
   if (mqtt_good) {
     drainMqttPublishQueue(4);
