@@ -16,9 +16,11 @@ volatile uint8_t serialLogHead = 0;
 volatile uint8_t serialLogTail = 0;
 volatile unsigned long serialLogDropped = 0;
 
+#if ENABLE_SDCARD
 LogMessage sdLogQueue[LOG_QUEUE_SIZE];
 volatile uint8_t sdLogHead = 0;
 volatile uint8_t sdLogTail = 0;
+#endif
 volatile unsigned long sdLogDropped = 0;
 
 bool queueLogMessage(LogMessage *queue,
@@ -55,12 +57,18 @@ bool queueSerialLog(const char *line, size_t len)
 
 bool queueSdLog(const char *line, size_t len)
 {
+#if ENABLE_SDCARD
   return queueLogMessage(sdLogQueue,
                          &sdLogHead,
                          &sdLogTail,
                          &sdLogDropped,
                          line,
                          len);
+#else
+  (void)line;
+  (void)len;
+  return false;
+#endif
 }
 
 void drainSerialLogQueue(uint8_t maxMessages)
@@ -77,6 +85,7 @@ void drainSerialLogQueue(uint8_t maxMessages)
 
 void drainSdLogQueue(uint8_t maxMessages, bool sdcard_available)
 {
+#if ENABLE_SDCARD
   if (!sdcard_available || sdLogTail == sdLogHead) {
     return;
   }
@@ -102,6 +111,10 @@ void drainSdLogQueue(uint8_t maxMessages, bool sdcard_available)
     written++;
   }
   fclose(file);
+#else
+  (void)maxMessages;
+  (void)sdcard_available;
+#endif
 }
 
 void drainLogQueues(uint8_t maxSerialMessages,
@@ -109,7 +122,12 @@ void drainLogQueues(uint8_t maxSerialMessages,
                     bool sdcard_available)
 {
   drainSerialLogQueue(maxSerialMessages);
+#if ENABLE_SDCARD
   drainSdLogQueue(maxSdMessages, sdcard_available);
+#else
+  (void)maxSdMessages;
+  (void)sdcard_available;
+#endif
 }
 
 void logger(const char *buf, bool sdcard_available)
@@ -125,9 +143,13 @@ void logger(const char *buf, bool sdcard_available)
   str[boundedLen] = '\0';
 
   queueSerialLog(str, boundedLen);
+#if ENABLE_SDCARD
   if (sdcard_available) {
     queueSdLog(str, boundedLen);
   }
+#else
+  (void)sdcard_available;
+#endif
 }
 
 #endif

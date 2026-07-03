@@ -44,11 +44,23 @@ struct DecodedAdvertisement;
 
 #include "time.h"
 
+/*
+ * configuration includes passwords/etc
+ * include separately to not leak private information
+ */
+#include "config.h"
+
+#ifndef ENABLE_SDCARD
+#define ENABLE_SDCARD 1
+#endif
+
+#if ENABLE_SDCARD
 // MicroSD
 #include "driver/sdmmc_host.h"
 #include "driver/sdmmc_defs.h"
 #include "sdmmc_cmd.h"
 #include "esp_vfs_fat.h"
+#endif
 
 // espressif to get MAC before startup
 #include "esp_mac.h"
@@ -75,12 +87,6 @@ struct DecodedAdvertisement;
 
 
 
-
-/*
- * configuration includes passwords/etc
- * include separately to not leak private information
- */
-#include "config.h"
 
 #include "logger.h"
 
@@ -791,6 +797,7 @@ String getIsoTime()
  * 
  * Setup the SD card for 
  */
+#if ENABLE_SDCARD
 esp_err_t init_sdcard()
 {
   esp_err_t ret = ESP_FAIL;
@@ -816,6 +823,7 @@ esp_err_t init_sdcard()
   }
   return ret;
 }
+#endif
 
 
 
@@ -824,17 +832,14 @@ void setup() {
   Serial.println();
 
 
-  /*
-   * SD card init
-   */
-  init_sdcard();
-
+#if ENABLE_SDCARD
   /*
    * TODO: LED is normall on pin 2, unless this is the esp32-cam board.
    * There, pin 2 is used for the uSD card interface (HS2_DATA0).
    * Attempting to initialize the uSD card changes the pin modes, so we must change
    * the LED pin back if there is in fact no uSD card connected.
    */
+  init_sdcard();
   Serial.print("LED pin: ");
   if (!sdcard_available) {
     Serial.println(LED_PIN);
@@ -848,6 +853,11 @@ void setup() {
     Serial.println(33);
     pinMode(33, OUTPUT);
   }
+#else
+  Serial.print("LED pin: ");
+  Serial.println(LED_PIN);
+  pinMode(LED_PIN, OUTPUT);
+#endif
   digitalWrite(LED_PIN, led_state);
 
 

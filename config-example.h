@@ -11,6 +11,9 @@
 #define LED_PIN 2
 #define BLINK_MS 50
 
+// Set to 0 for boards without an SD card slot or when flash/RAM should be minimized.
+#define ENABLE_SDCARD 1
+
 
 // WiFi config
 const int WIFI_RETRY_DELAY = 300000;  // milliseconds
