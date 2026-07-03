@@ -9,7 +9,7 @@
  *  CPU frequency: 240MHz (WiFi/BT)
  *  Flash frequency: 80MHz
  *  Flash size: 4MB (32Mb)
- *  Partition scheme: Huge App (3MB No OTA/1MB SPIFFS)
+ *  Partition scheme: Minimal SPIFFS (1.9MB APP with OTA/128KB SPIFFS)
  *
  *
  * TODO:
@@ -17,7 +17,7 @@
  * Some devices (e.g. Mooshimeter) broadcast multiple types of advertisements
  * with different payloads.  The BLE library can be set to only return new
  * addresses during a scan interval, which then misses these multiple packets.
- * pBLEScan->setAdvertisedDeviceCallbacks(..., bool keepDuplicates)
+ * pBLEScan->setScanCallbacks(..., bool wantDuplicates)
  * 
  * It would be potentially useful to record *unique advertisements*, meaning
  * only ignore duplicates of *both* address+payload.  The BLE library doesn't
@@ -65,16 +65,13 @@ struct DecodedAdvertisement;
 // espressif to get MAC before startup
 #include "esp_mac.h"
 
-// BLE is now installed with the Espressif/ESP32 Arduino package
-#include <BLEDevice.h>
-#include <BLEUtils.h>
-#include <BLEScan.h>
-#include <BLEAdvertisedDevice.h>
-
 
 /*
  * Extra libraries installed from the Library Manager
  */
+// NimBLE-Arduino
+#include <NimBLEDevice.h>
+
 // https://github.com/arduino-libraries/NTPClient
 #include <NTPClient.h>
 
@@ -117,7 +114,7 @@ unsigned long last_status = 30000;  // nonzero to defer our first status until t
 unsigned long nPackets = 0;
 
 
-BLEScan* pBLEScan;
+NimBLEScan* pBLEScan;
 bool is_scanning = false;
 bool cold_boot = true;  // treat power-on differently than re-starting a scan
 
@@ -134,10 +131,6 @@ const uint8_t MQTT_PUBLISH_QUEUE_SIZE = 16;
 const uint8_t ADV_QUEUE_SIZE = 16;
 const uint16_t ADV_MAX_PAYLOAD_SIZE = 255;
 
-const uint8_t ADV_HAS_RSSI = 0x01;
-const uint8_t ADV_HAS_TX_POWER = 0x02;
-const uint8_t ADV_PAYLOAD_TRUNCATED = 0x04;
-
 struct MqttPublishMessage {
   size_t len;
   char payload[LOG_MESSAGE_SIZE];
@@ -147,10 +140,8 @@ struct AdvertisementMessage {
   uint32_t epoch;
   uint32_t millisSeen;
   uint8_t mac[6];
-  uint8_t addressType;
-  uint8_t advType;
-  uint8_t metaFlags;
   int8_t rssi;
+  bool hasTxPower;
   int8_t txPower;
   uint16_t payloadLen;
   uint8_t payload[ADV_MAX_PAYLOAD_SIZE];
@@ -474,14 +465,9 @@ static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out
             appendJsonStringField(out, outSize, &pos, &needsComma, "time", timeStr) &&
             appendJsonStringField(out, outSize, &pos, &needsComma, "mac", macStr) &&
             appendJsonStringField(out, outSize, &pos, &needsComma, "payload", payloadStr) &&
-            appendJsonIntField(out, outSize, &pos, &needsComma, "address_type", msg->addressType) &&
-            appendJsonIntField(out, outSize, &pos, &needsComma, "adv_type", msg->advType);
+            appendJsonIntField(out, outSize, &pos, &needsComma, "rssi", msg->rssi);
 
-  if (ok && (msg->metaFlags & ADV_HAS_RSSI)) {
-    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "rssi", msg->rssi);
-  }
-
-  if (ok && (msg->metaFlags & ADV_HAS_TX_POWER)) {
+  if (ok && msg->hasTxPower) {
     ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", msg->txPower);
   } else if (ok && decoded.haveTxPower) {
     ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", decoded.txPower);
@@ -507,10 +493,6 @@ static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out
                                       decoded.completeNameLen);
   }
 
-  if (ok && (msg->metaFlags & ADV_PAYLOAD_TRUNCATED)) {
-    ok = appendJsonBoolField(out, outSize, &pos, &needsComma, "truncated", true);
-  }
-
   if (!ok || !appendJsonFormat(out, outSize, &pos, "}")) {
     snprintf(out, outSize, "{\"error\":\"advertisement_json_overflow\"}");
     return strlen(out);
@@ -520,7 +502,7 @@ static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out
 }
 
 
-static bool queueAdvertisement(BLEAdvertisedDevice *advertisedDevice)
+static bool queueAdvertisement(const NimBLEAdvertisedDevice *advertisedDevice)
 {
   uint8_t nextHead = (advHead + 1) % ADV_QUEUE_SIZE;
 
@@ -530,37 +512,32 @@ static bool queueAdvertisement(BLEAdvertisedDevice *advertisedDevice)
   }
 
   AdvertisementMessage *msg = &advQueue[advHead];
-  BLEAddress address = advertisedDevice->getAddress();
-  uint8_t *nativeAddress = address.getNative();
-  size_t payloadLen = advertisedDevice->getPayloadLength();
+  const NimBLEAddress& address = advertisedDevice->getAddress();
+  const uint8_t *nativeAddress = address.getVal();
+  const std::vector<uint8_t>& payload = advertisedDevice->getPayload();
+  size_t payloadLen = payload.size();
 
   msg->epoch = ntpClient.getEpochTime();
   msg->millisSeen = millis();
-  memcpy(msg->mac, nativeAddress, sizeof(msg->mac));
-  msg->addressType = advertisedDevice->getAddressType();
-  msg->advType = advertisedDevice->getAdvType();
-  msg->metaFlags = 0;
-  msg->rssi = 0;
+  for (uint8_t i = 0; i < sizeof(msg->mac); i++) {
+    msg->mac[i] = nativeAddress[sizeof(msg->mac) - 1 - i];
+  }
+  msg->rssi = (int8_t)advertisedDevice->getRSSI();
+  msg->hasTxPower = false;
   msg->txPower = 0;
 
-  if (advertisedDevice->haveRSSI()) {
-    msg->metaFlags |= ADV_HAS_RSSI;
-    msg->rssi = (int8_t)advertisedDevice->getRSSI();
-  }
-
   if (advertisedDevice->haveTXPower()) {
-    msg->metaFlags |= ADV_HAS_TX_POWER;
+    msg->hasTxPower = true;
     msg->txPower = advertisedDevice->getTXPower();
   }
 
   if (payloadLen > sizeof(msg->payload)) {
-    msg->metaFlags |= ADV_PAYLOAD_TRUNCATED;
     payloadLen = sizeof(msg->payload);
   }
 
   msg->payloadLen = payloadLen;
   if (payloadLen > 0) {
-    memcpy(msg->payload, advertisedDevice->getPayload(), payloadLen);
+    memcpy(msg->payload, payload.data(), payloadLen);
   }
 
   advHead = nextHead;
@@ -590,9 +567,9 @@ static void drainAdvertisementQueue(uint8_t maxMessages)
 /*
  * Callback that gets called on every received BLE advertisement.
  */
-class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
-  void onResult(BLEAdvertisedDevice advertisedDevice) {
-    queueAdvertisement(&advertisedDevice);
+class MyAdvertisedDeviceCallbacks: public NimBLEScanCallbacks {
+  void onResult(const NimBLEAdvertisedDevice *advertisedDevice) override {
+    queueAdvertisement(advertisedDevice);
 
     // Blink for every received advertisement
     nBlinks += 1;
@@ -600,16 +577,15 @@ class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     // Count packets heard
     nPackets += 1;
   }
+
+  void onScanEnd(const NimBLEScanResults& scanResults, int reason) override {
+    is_scanning = false;
+  }
 };
 
 
 
-/*
- * Callback invoked when scanning has completed.
- */
-static void scanCompleteCB(BLEScanResults scanResults) {
-  is_scanning = false;
-} // scanCompleteCB
+static MyAdvertisedDeviceCallbacks advertisedDeviceCallbacks;
 
 
 
@@ -621,17 +597,17 @@ void startBLEScan(bool reinit=false)
 {
   Serial.println("Starting BLE scan.");
   if (reinit) {
-    BLEDevice::deinit(true);
-    BLEDevice::init("");
-    pBLEScan = BLEDevice::getScan(); //create new scan
-    pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks(), KEEP_DUPLICATES);  // keepDuplicates?
+    NimBLEDevice::deinit(true);
+    NimBLEDevice::init("");
+    pBLEScan = NimBLEDevice::getScan(); //create new scan
+    pBLEScan->setScanCallbacks(&advertisedDeviceCallbacks, KEEP_DUPLICATES);  // keepDuplicates?
     pBLEScan->setActiveScan(true); //active scan uses more power, but get results faster
     pBLEScan->setInterval(100);
     pBLEScan->setWindow(99);  // less or equal to setInterval value
   }
 
   // forget about the devices seen in the last BLE_SCAN_TIME interval
-  pBLEScan->start(BLE_SCAN_TIME, scanCompleteCB, false);
+  pBLEScan->start((uint32_t)BLE_SCAN_TIME * 1000, false, true);
   is_scanning = true;
 }
 
