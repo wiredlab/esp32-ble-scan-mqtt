@@ -746,15 +746,18 @@ bool pub_status_mqtt(const char *state)
   status_json["hostname"] = WiFi.getHostname();
   status_json["version"] = GIT_VERSION;
 
-  char buf[256];
-  serializeJson(status_json, buf, sizeof(buf));
+  char buf[LOG_MESSAGE_SIZE];
+  size_t len = serializeJson(status_json, buf, sizeof(buf));
 
   logger(buf, sdcard_available);
 
   if (mqtt.connected()) {
-    return mqtt.publish((MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC).c_str(),
-                        buf,
-                        true);
+    String announceTopic = MQTT_PREFIX_TOPIC + my_mac + MQTT_ANNOUNCE_TOPIC;
+    if (!mqtt.beginPublish(announceTopic.c_str(), len, true)) {
+      return false;
+    }
+    mqtt.write((const uint8_t *)buf, len);
+    return mqtt.endPublish();
   } else {
     return false;
   }
@@ -910,7 +913,7 @@ void loop() {
   }
 
   drainAdvertisementQueue(8);
-  drainLogQueues(8, 4, sdcard_available);
+  drainLogQueues(4, 4, sdcard_available);
 
   if (mqtt_good) {
     drainMqttPublishQueue(4);
