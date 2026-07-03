@@ -35,6 +35,9 @@
 // all 3 WiFi libraries from
 // https://github.com/espressif/arduino-esp32
 // already installed with ESP32 package
+struct AdvertisementMessage;
+struct DecodedAdvertisement;
+
 #include <WiFi.h>
 #include <WiFiUdp.h>
 #include <WiFiMulti.h>
@@ -121,11 +124,30 @@ PubSubClient mqtt(wifi);
 unsigned long last_wifi_check = 0;
 unsigned long last_mqtt_check = 0;
 
-const uint8_t MQTT_PUBLISH_QUEUE_SIZE = 32;
+const uint8_t MQTT_PUBLISH_QUEUE_SIZE = 16;
+const uint8_t ADV_QUEUE_SIZE = 16;
+const uint16_t ADV_MAX_PAYLOAD_SIZE = 255;
+
+const uint8_t ADV_HAS_RSSI = 0x01;
+const uint8_t ADV_HAS_TX_POWER = 0x02;
+const uint8_t ADV_PAYLOAD_TRUNCATED = 0x04;
 
 struct MqttPublishMessage {
   size_t len;
-  char payload[256];
+  char payload[LOG_MESSAGE_SIZE];
+};
+
+struct AdvertisementMessage {
+  uint32_t epoch;
+  uint32_t millisSeen;
+  uint8_t mac[6];
+  uint8_t addressType;
+  uint8_t advType;
+  uint8_t metaFlags;
+  int8_t rssi;
+  int8_t txPower;
+  uint16_t payloadLen;
+  uint8_t payload[ADV_MAX_PAYLOAD_SIZE];
 };
 
 MqttPublishMessage mqttPublishQueue[MQTT_PUBLISH_QUEUE_SIZE];
@@ -133,25 +155,14 @@ volatile uint8_t mqttPublishHead = 0;
 volatile uint8_t mqttPublishTail = 0;
 volatile unsigned long mqttPublishDropped = 0;
 
+AdvertisementMessage advQueue[ADV_QUEUE_SIZE];
+volatile uint8_t advHead = 0;
+volatile uint8_t advTail = 0;
+volatile unsigned long advDropped = 0;
+
 
 volatile bool sdcard_available = false;
 
-
-/*
- * Given a byte array of length (n), return the ASCII hex representation
- * and properly zero pad values less than 0x10.
- * String(0x08, HEX) will yield '8' instead of the expected '08' string
- */
-String hexToStr(uint8_t* arr, int n)
-{
-  String result;
-  result.reserve(2*n);
-  for (int i = 0; i < n; ++i) {
-    if (arr[i] < 0x10) {result += '0';}
-    result += String(arr[i], HEX);
-  }
-  return result;
-}
 
 
 bool queueMqttPublish(const char *payload, size_t len)
@@ -191,56 +202,404 @@ void drainMqttPublishQueue(uint8_t maxMessages)
 }
 
 
+static void formatIsoTimeFromEpoch(uint32_t epoch, char *out, size_t outSize)
+{
+  if (outSize == 0) {
+    return;
+  }
+
+  time_t time_now = (time_t)epoch;
+  struct tm timestamp;
+  localtime_r(&time_now, &timestamp);
+
+  if (timestamp.tm_year <= (2016 - 1900)) {
+    snprintf(out, outSize, "YYYY-MM-DDTHH:MM:SSZ");
+  } else {
+    strftime(out, outSize, "%Y-%m-%dT%H:%M:%SZ", &timestamp);
+  }
+}
+
+
+static void hexToBuffer(const uint8_t *src, size_t srcLen, char *out, size_t outSize)
+{
+  static const char hex[] = "0123456789abcdef";
+  size_t pos = 0;
+
+  if (outSize == 0) {
+    return;
+  }
+
+  for (size_t i = 0; i < srcLen && pos + 2 < outSize; i++) {
+    out[pos++] = hex[src[i] >> 4];
+    out[pos++] = hex[src[i] & 0x0f];
+  }
+  out[pos] = '\0';
+}
+
+
+static bool appendJsonFormat(char *out, size_t outSize, size_t *pos, const char *fmt, ...)
+{
+  if (*pos >= outSize) {
+    return false;
+  }
+
+  va_list args;
+  va_start(args, fmt);
+  int written = vsnprintf(out + *pos, outSize - *pos, fmt, args);
+  va_end(args);
+
+  if (written < 0) {
+    return false;
+  }
+
+  if ((size_t)written >= outSize - *pos) {
+    *pos = outSize - 1;
+    out[*pos] = '\0';
+    return false;
+  }
+
+  *pos += (size_t)written;
+  return true;
+}
+
+
+static bool appendJsonComma(char *out, size_t outSize, size_t *pos, bool *needsComma)
+{
+  if (*needsComma && !appendJsonFormat(out, outSize, pos, ",")) {
+    return false;
+  }
+
+  *needsComma = true;
+  return true;
+}
+
+
+static bool appendJsonStringEscaped(char *out,
+                             size_t outSize,
+                             size_t *pos,
+                             const uint8_t *src,
+                             size_t srcLen)
+{
+  for (size_t i = 0; i < srcLen; i++) {
+    uint8_t c = src[i];
+
+    switch (c) {
+      case '"':
+      case '\\':
+        if (!appendJsonFormat(out, outSize, pos, "\\%c", c)) {
+          return false;
+        }
+        break;
+      case '\b':
+        if (!appendJsonFormat(out, outSize, pos, "\\b")) {
+          return false;
+        }
+        break;
+      case '\f':
+        if (!appendJsonFormat(out, outSize, pos, "\\f")) {
+          return false;
+        }
+        break;
+      case '\n':
+        if (!appendJsonFormat(out, outSize, pos, "\\n")) {
+          return false;
+        }
+        break;
+      case '\r':
+        if (!appendJsonFormat(out, outSize, pos, "\\r")) {
+          return false;
+        }
+        break;
+      case '\t':
+        if (!appendJsonFormat(out, outSize, pos, "\\t")) {
+          return false;
+        }
+        break;
+      default:
+        if (c < 0x20) {
+          if (!appendJsonFormat(out, outSize, pos, "\\u%04x", c)) {
+            return false;
+          }
+        } else if (!appendJsonFormat(out, outSize, pos, "%c", c)) {
+          return false;
+        }
+        break;
+    }
+  }
+
+  return true;
+}
+
+
+static bool appendJsonStringField(char *out,
+                           size_t outSize,
+                           size_t *pos,
+                           bool *needsComma,
+                           const char *key,
+                           const char *value)
+{
+  return appendJsonComma(out, outSize, pos, needsComma) &&
+         appendJsonFormat(out, outSize, pos, "\"%s\":\"%s\"", key, value);
+}
+
+
+static bool appendJsonEscapedStringField(char *out,
+                                  size_t outSize,
+                                  size_t *pos,
+                                  bool *needsComma,
+                                  const char *key,
+                                  const uint8_t *value,
+                                  size_t valueLen)
+{
+  return appendJsonComma(out, outSize, pos, needsComma) &&
+         appendJsonFormat(out, outSize, pos, "\"%s\":\"", key) &&
+         appendJsonStringEscaped(out, outSize, pos, value, valueLen) &&
+         appendJsonFormat(out, outSize, pos, "\"");
+}
+
+
+static bool appendJsonIntField(char *out,
+                        size_t outSize,
+                        size_t *pos,
+                        bool *needsComma,
+                        const char *key,
+                        long value)
+{
+  return appendJsonComma(out, outSize, pos, needsComma) &&
+         appendJsonFormat(out, outSize, pos, "\"%s\":%ld", key, value);
+}
+
+
+static bool appendJsonBoolField(char *out,
+                         size_t outSize,
+                         size_t *pos,
+                         bool *needsComma,
+                         const char *key,
+                         bool value)
+{
+  return appendJsonComma(out, outSize, pos, needsComma) &&
+         appendJsonFormat(out, outSize, pos, "\"%s\":%s", key, value ? "true" : "false");
+}
+
+
+
+struct DecodedAdvertisement {
+  bool haveAdFlags;
+  uint8_t adFlags;
+  bool haveName;
+  const uint8_t *name;
+  size_t nameLen;
+  bool haveTxPower;
+  int8_t txPower;
+  bool haveAppearance;
+  uint16_t appearance;
+};
+
+
+static void decodeAdvertisementPayload(const uint8_t *payload,
+                                size_t payloadLen,
+                                DecodedAdvertisement *decoded)
+{
+  memset(decoded, 0, sizeof(*decoded));
+
+  size_t pos = 0;
+  while (pos < payloadLen) {
+    uint8_t fieldLen = payload[pos];
+    if (fieldLen == 0) {
+      break;
+    }
+
+    if (fieldLen < 1 || pos + 1 + fieldLen > payloadLen) {
+      break;
+    }
+
+    uint8_t adType = payload[pos + 1];
+    const uint8_t *data = payload + pos + 2;
+    size_t dataLen = fieldLen - 1;
+
+    switch (adType) {
+      case 0x01:
+        if (dataLen >= 1) {
+          decoded->haveAdFlags = true;
+          decoded->adFlags = data[0];
+        }
+        break;
+      case 0x08:
+        if (!decoded->haveName && dataLen > 0) {
+          decoded->haveName = true;
+          decoded->name = data;
+          decoded->nameLen = dataLen;
+        }
+        break;
+      case 0x09:
+        if (dataLen > 0) {
+          decoded->haveName = true;
+          decoded->name = data;
+          decoded->nameLen = dataLen;
+        }
+        break;
+      case 0x0a:
+        if (dataLen >= 1) {
+          decoded->haveTxPower = true;
+          decoded->txPower = (int8_t)data[0];
+        }
+        break;
+      case 0x19:
+        if (dataLen >= 2) {
+          decoded->haveAppearance = true;
+          decoded->appearance = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
+        }
+        break;
+      default:
+        break;
+    }
+
+    pos += 1 + fieldLen;
+  }
+}
+
+
+static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out, size_t outSize)
+{
+  char timeStr[21];
+  char macStr[13];
+  char payloadStr[ADV_MAX_PAYLOAD_SIZE * 2 + 1];
+  DecodedAdvertisement decoded;
+  size_t pos = 0;
+  bool needsComma = false;
+
+  if (outSize == 0) {
+    return 0;
+  }
+
+  formatIsoTimeFromEpoch(msg->epoch, timeStr, sizeof(timeStr));
+  hexToBuffer(msg->mac, sizeof(msg->mac), macStr, sizeof(macStr));
+  hexToBuffer(msg->payload, msg->payloadLen, payloadStr, sizeof(payloadStr));
+  decodeAdvertisementPayload(msg->payload, msg->payloadLen, &decoded);
+
+  bool ok = appendJsonFormat(out, outSize, &pos, "{") &&
+            appendJsonStringField(out, outSize, &pos, &needsComma, "time", timeStr) &&
+            appendJsonStringField(out, outSize, &pos, &needsComma, "mac", macStr) &&
+            appendJsonStringField(out, outSize, &pos, &needsComma, "payload", payloadStr) &&
+            appendJsonIntField(out, outSize, &pos, &needsComma, "address_type", msg->addressType) &&
+            appendJsonIntField(out, outSize, &pos, &needsComma, "adv_type", msg->advType);
+
+  if (ok && (msg->metaFlags & ADV_HAS_RSSI)) {
+    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "rssi", msg->rssi);
+  }
+
+  if (ok && (msg->metaFlags & ADV_HAS_TX_POWER)) {
+    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", msg->txPower);
+  } else if (ok && decoded.haveTxPower) {
+    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", decoded.txPower);
+  }
+
+  if (ok && decoded.haveName) {
+    ok = appendJsonEscapedStringField(out,
+                                      outSize,
+                                      &pos,
+                                      &needsComma,
+                                      "name",
+                                      decoded.name,
+                                      decoded.nameLen);
+  }
+
+  if (ok && decoded.haveAdFlags) {
+    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "ad_flags", decoded.adFlags);
+  }
+
+  if (ok && (msg->metaFlags & ADV_PAYLOAD_TRUNCATED)) {
+    ok = appendJsonBoolField(out, outSize, &pos, &needsComma, "truncated", true);
+  }
+
+  if (!ok || !appendJsonFormat(out, outSize, &pos, "}")) {
+    snprintf(out, outSize, "{\"error\":\"advertisement_json_overflow\"}");
+    return strlen(out);
+  }
+
+  return pos;
+}
+
+
+static bool queueAdvertisement(BLEAdvertisedDevice *advertisedDevice)
+{
+  uint8_t nextHead = (advHead + 1) % ADV_QUEUE_SIZE;
+
+  if (nextHead == advTail) {
+    advDropped++;
+    return false;
+  }
+
+  AdvertisementMessage *msg = &advQueue[advHead];
+  BLEAddress address = advertisedDevice->getAddress();
+  uint8_t *nativeAddress = address.getNative();
+  size_t payloadLen = advertisedDevice->getPayloadLength();
+
+  msg->epoch = ntpClient.getEpochTime();
+  msg->millisSeen = millis();
+  memcpy(msg->mac, nativeAddress, sizeof(msg->mac));
+  msg->addressType = advertisedDevice->getAddressType();
+  msg->advType = advertisedDevice->getAdvType();
+  msg->metaFlags = 0;
+  msg->rssi = 0;
+  msg->txPower = 0;
+
+  if (advertisedDevice->haveRSSI()) {
+    msg->metaFlags |= ADV_HAS_RSSI;
+    msg->rssi = (int8_t)advertisedDevice->getRSSI();
+  }
+
+  if (advertisedDevice->haveTXPower()) {
+    msg->metaFlags |= ADV_HAS_TX_POWER;
+    msg->txPower = advertisedDevice->getTXPower();
+  }
+
+  if (payloadLen > sizeof(msg->payload)) {
+    msg->metaFlags |= ADV_PAYLOAD_TRUNCATED;
+    payloadLen = sizeof(msg->payload);
+  }
+
+  msg->payloadLen = payloadLen;
+  if (payloadLen > 0) {
+    memcpy(msg->payload, advertisedDevice->getPayload(), payloadLen);
+  }
+
+  advHead = nextHead;
+  return true;
+}
+
+
+static void drainAdvertisementQueue(uint8_t maxMessages)
+{
+  uint8_t drained = 0;
+  char buffer[LOG_MESSAGE_SIZE];
+
+  while (advTail != advHead && drained < maxMessages) {
+    AdvertisementMessage *msg = &advQueue[advTail];
+    size_t len = formatAdvertisementJson(msg, buffer, sizeof(buffer));
+
+    logger(buffer, sdcard_available);
+    queueMqttPublish(buffer, len);
+
+    advTail = (advTail + 1) % ADV_QUEUE_SIZE;
+    drained++;
+  }
+}
+
+
 
 /*
  * Callback that gets called on every received BLE advertisement.
  */
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
   void onResult(BLEAdvertisedDevice advertisedDevice) {
-    // Construct a JSON-formatted string with device information
-    JsonDocument json;
-
-    json["time"] = getIsoTime();
-    String mac = hexToStr(advertisedDevice.getAddress().getNative(), 6);
-    json["mac"] = mac;
-
-    String payload = hexToStr(advertisedDevice.getPayload(), advertisedDevice.getPayloadLength());
-    json["payload"] = payload;
-
-    if (advertisedDevice.haveRSSI()) {
-      json["rssi"] = advertisedDevice.getRSSI();
-    }
-
-    if (advertisedDevice.haveTXPower()) {
-      json["tx"] = advertisedDevice.getTXPower();
-    }
-
-    if (advertisedDevice.haveName()) {
-      String name = advertisedDevice.getName();
-      json["name"] = name;
-    }
-
-    char buffer[256];
-    size_t len = serializeJson(json, buffer, sizeof(buffer));
-
-    // Save line to file on sd card
-    // open new file if:
-    //    no existing file
-    //    current file is too large
-    //    UTC date has changed
-    //
-    logger(buffer, sdcard_available);
-
-    // Publish the string via MQTT
-    queueMqttPublish(buffer, len);
+    queueAdvertisement(&advertisedDevice);
 
     // Blink for every received advertisement
     nBlinks += 1;
 
     // Count packets heard
     nPackets += 1;
-
-    //Serial.println(buffer);
   }
 };
 
@@ -385,6 +744,7 @@ bool pub_status_mqtt(const char *state)
   status_json["uptime_ms"] = millis();
   status_json["packets"] = nPackets;
   status_json["dropped"] = mqttPublishDropped;
+  status_json["dropped_adv"] = advDropped;
   status_json["dropped_serial"] = serialLogDropped;
   status_json["dropped_sd"] = sdLogDropped;
   status_json["ssid"] = WiFi.SSID();
@@ -499,7 +859,9 @@ void setup() {
    * setup WiFi
    */
   esp_read_mac(mac, ESP_MAC_WIFI_STA);
-  my_mac = hexToStr(mac, 6);
+  char macStr[13];
+  hexToBuffer(mac, sizeof(mac), macStr, sizeof(macStr));
+  my_mac = macStr;
 
   String msg = "\nMAC: " + my_mac;
   logger(msg.c_str(), sdcard_available);
@@ -554,6 +916,7 @@ void loop() {
     mqtt.loop();
   }
 
+  drainAdvertisementQueue(8);
   drainLogQueues(8, 4, sdcard_available);
 
   if (mqtt_good) {

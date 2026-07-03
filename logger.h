@@ -2,8 +2,8 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
-const uint8_t LOG_QUEUE_SIZE = 32;
-const size_t LOG_MESSAGE_SIZE = 256;
+const uint8_t LOG_QUEUE_SIZE = 16;
+const size_t LOG_MESSAGE_SIZE = 768;
 const size_t LOG_LINE_SIZE = 10 + 1 + (LOG_MESSAGE_SIZE - 1) + 1 + 1;
 
 struct LogMessage {
