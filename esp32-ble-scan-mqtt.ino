@@ -384,15 +384,14 @@ static bool appendJsonBoolField(char *out,
 
 
 struct DecodedAdvertisement {
-  bool haveAdFlags;
-  uint8_t adFlags;
-  bool haveName;
-  const uint8_t *name;
-  size_t nameLen;
+  bool haveShortName;
+  const uint8_t *shortName;
+  size_t shortNameLen;
+  bool haveCompleteName;
+  const uint8_t *completeName;
+  size_t completeNameLen;
   bool haveTxPower;
   int8_t txPower;
-  bool haveAppearance;
-  uint16_t appearance;
 };
 
 
@@ -418,36 +417,24 @@ static void decodeAdvertisementPayload(const uint8_t *payload,
     size_t dataLen = fieldLen - 1;
 
     switch (adType) {
-      case 0x01:
-        if (dataLen >= 1) {
-          decoded->haveAdFlags = true;
-          decoded->adFlags = data[0];
-        }
-        break;
       case 0x08:
-        if (!decoded->haveName && dataLen > 0) {
-          decoded->haveName = true;
-          decoded->name = data;
-          decoded->nameLen = dataLen;
+        if (dataLen > 0) {
+          decoded->haveShortName = true;
+          decoded->shortName = data;
+          decoded->shortNameLen = dataLen;
         }
         break;
       case 0x09:
         if (dataLen > 0) {
-          decoded->haveName = true;
-          decoded->name = data;
-          decoded->nameLen = dataLen;
+          decoded->haveCompleteName = true;
+          decoded->completeName = data;
+          decoded->completeNameLen = dataLen;
         }
         break;
       case 0x0a:
         if (dataLen >= 1) {
           decoded->haveTxPower = true;
           decoded->txPower = (int8_t)data[0];
-        }
-        break;
-      case 0x19:
-        if (dataLen >= 2) {
-          decoded->haveAppearance = true;
-          decoded->appearance = (uint16_t)data[0] | ((uint16_t)data[1] << 8);
         }
         break;
       default:
@@ -494,18 +481,24 @@ static size_t formatAdvertisementJson(const AdvertisementMessage *msg, char *out
     ok = appendJsonIntField(out, outSize, &pos, &needsComma, "tx", decoded.txPower);
   }
 
-  if (ok && decoded.haveName) {
+  if (ok && decoded.haveShortName) {
     ok = appendJsonEscapedStringField(out,
                                       outSize,
                                       &pos,
                                       &needsComma,
-                                      "name",
-                                      decoded.name,
-                                      decoded.nameLen);
+                                      "name_short",
+                                      decoded.shortName,
+                                      decoded.shortNameLen);
   }
 
-  if (ok && decoded.haveAdFlags) {
-    ok = appendJsonIntField(out, outSize, &pos, &needsComma, "ad_flags", decoded.adFlags);
+  if (ok && decoded.haveCompleteName) {
+    ok = appendJsonEscapedStringField(out,
+                                      outSize,
+                                      &pos,
+                                      &needsComma,
+                                      "name_complete",
+                                      decoded.completeName,
+                                      decoded.completeNameLen);
   }
 
   if (ok && (msg->metaFlags & ADV_PAYLOAD_TRUNCATED)) {
