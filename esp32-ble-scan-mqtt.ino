@@ -367,19 +367,6 @@ static bool appendJsonIntField(char *out,
 }
 
 
-static bool appendJsonBoolField(char *out,
-                         size_t outSize,
-                         size_t *pos,
-                         bool *needsComma,
-                         const char *key,
-                         bool value)
-{
-  return appendJsonComma(out, outSize, pos, needsComma) &&
-         appendJsonFormat(out, outSize, pos, "\"%s\":%s", key, value ? "true" : "false");
-}
-
-
-
 struct DecodedAdvertisement {
   bool haveShortName;
   const uint8_t *shortName;
@@ -718,7 +705,7 @@ bool pub_status_mqtt(const char *state)
   status_json["time"] = getIsoTime();
   status_json["uptime_ms"] = millis();
   status_json["packets"] = nPackets;
-  status_json["dropped"] = mqttPublishDropped;
+  status_json["dropped_mqtt"] = mqttPublishDropped;
   status_json["dropped_adv"] = advDropped;
   status_json["dropped_serial"] = serialLogDropped;
   status_json["dropped_sd"] = sdLogDropped;
