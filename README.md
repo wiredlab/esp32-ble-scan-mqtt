@@ -58,6 +58,11 @@ make program PORT=/dev/ttyUSB0
 ```
 
 Use `make compile` to build without flashing. Build files go in ignored `build/`.
+Use `make erase PORT=/dev/ttyUSB0` to erase all flash, including firmware and
+saved device data, without compiling or uploading. The port can be omitted
+when exactly one USB serial device is connected. The erase target locates
+esptool through the installed Arduino core; override `ESPTOOL` if needed.
+To erase and then flash, run `make erase PORT=/dev/ttyUSB0 && make program PORT=/dev/ttyUSB0`.
 `ARDUINO_CLI`, `FQBN`, `BUILD_DIR`, and `JOBS` can be overridden on the Make
 command line. Compilation defaults to two parallel jobs.
 
