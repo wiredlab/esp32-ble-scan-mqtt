@@ -87,8 +87,8 @@ struct DecodedAdvertisement;
 
 #include "logger.h"
 
-/* https://github.com/fabianoriccardi/git-describe-arduino
- * add a GIT_VERSION string that is updated every compile event
+/* Make supplies the live Git version as a compiler definition.
+ * The header provides a fallback for other build workflows.
  */
 #include "git-version.h"
 

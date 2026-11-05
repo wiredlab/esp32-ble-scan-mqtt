@@ -35,6 +35,38 @@ Install these Arduino libraries:
 
 The ESP32 Arduino core provides the WiFi, UDP, SD/MMC, and ESP system headers used by the sketch.
 
+## Build and flash from the command line
+
+Use `arduino-cli` (Arduino CLI) and GNU Make. The Makefile uses the board
+settings listed above, including `PartitionScheme=min_spiffs`.
+Install the ESP32 core and the four libraries listed above first. The local
+toolchain used for verification is ESP32 core 3.3.10, NimBLE-Arduino 2.5.0,
+NTPClient 3.2.1, PubSubClient 2.8, and ArduinoJson 7.4.3.
+
+After configuring `config.h`, connect the device by USB and run:
+
+```bash
+make program
+```
+
+This compiles the current sketch before uploading. A single USB serial port
+is selected automatically on Linux/macOS. If none or several are present:
+
+```bash
+make ports
+make program PORT=/dev/ttyUSB0
+```
+
+Use `make compile` to build without flashing. Build files go in ignored `build/`.
+`ARDUINO_CLI`, `FQBN`, `BUILD_DIR`, and `JOBS` can be overridden on the Make
+command line. Compilation defaults to two parallel jobs.
+
+Every Make build supplies `GIT_VERSION` to the compiler from
+`git describe --tags --always --dirty`. This captures the current tag/commit
+and tracked working-tree changes without rewriting `git-version.h`.
+Git metadata is required; builds outside Make default to `unknown` unless
+they supply `GIT_VERSION` themselves.
+
 ## Configuration
 
 Copy `config-example.h` to `config.h` and edit it for your environment:

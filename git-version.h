@@ -1,10 +1,8 @@
 /*
- * This file contents is replaced using the build-time script from:
- * https://github.com/fabianoriccardi/git-describe-arduino
- *
- * Define something here so compilation proceeds when the tool isn't present.
- * Generate the string manually by:
- *
- *  git describe --tags --always --dirty
+ * Make supplies GIT_VERSION at compile time using:
+ *   git describe --tags --always --dirty
+ * Keep an honest fallback for builds that do not supply a version.
  */
-#define GIT_VERSION "v1.3.1"
+#ifndef GIT_VERSION
+#define GIT_VERSION "unknown"
+#endif
