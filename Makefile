@@ -13,9 +13,9 @@ check-config:
 	@test -f config.h || { echo 'Copy config-example.h to config.h and configure WiFi/MQTT first.' >&2; exit 1; }
 
 compile: check-config
-	@version=$$(git describe --tags --always --dirty) || exit 1; \
+	version=$$(git describe --tags --always --dirty) || exit 1; \
 	echo "Building firmware $$version"; \
-	$(ARDUINO_CLI) compile --fqbn "$(FQBN)" --jobs "$(JOBS)" --build-path "$(BUILD_DIR)" \
+	$(ARDUINO_CLI) compile --verbose --fqbn "$(FQBN)" --jobs "$(JOBS)" --build-path "$(BUILD_DIR)" \
 		--build-property "compiler.cpp.extra_flags=-DGIT_VERSION=\"$$version\"" .
 
 check-port:
@@ -25,7 +25,7 @@ check-port:
 # including when the caller uses make -j.
 program: check-port
 	$(MAKE) compile
-	$(ARDUINO_CLI) upload --fqbn "$(FQBN)" --port "$(PORT)" --input-dir "$(BUILD_DIR)" .
+	$(ARDUINO_CLI) upload --verbose --fqbn "$(FQBN)" --port "$(PORT)" --input-dir "$(BUILD_DIR)" .
 
 ports:
 	$(ARDUINO_CLI) board list
